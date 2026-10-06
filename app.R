@@ -5,24 +5,16 @@ library(dplyr)
 library(janitor)
 library(DT)
 library(tidyr)
-library(leaflet)
-library(sf)
-library(geobr)
+library(ggplot2)
+library(scales)
 
 # 1. Carregando os Dados do Excel
 caminho_arquivo <- "Matriculas_Municipio_AI_AF_EM_populacao.xlsx"
 dados_matriculas <- read_excel(caminho_arquivo, sheet = "Base") |> clean_names()
 
-# Garante que o código do município seja numérico padrão nos dados
-dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
-
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 
-# 2. Carregando o Mapa Geográfico do Paraná (IBGE)
-mapa_pr <- read_municipality(code_muni = "PR", year = 2020, showProgress = FALSE)
-mapa_pr$code_muni <- as.numeric(mapa_pr$code_muni)
-
-# 3. Interface (UI)
+# 2. Interface (UI)
 ui <- page_navbar(
   title = "Dashboard Educacional - Paraná",
   theme = bs_theme(preset = "flatly"),
@@ -50,22 +42,38 @@ ui <- page_navbar(
     ),
     
     hr(),
+    
+    selectInput(
+      inputId = "rede_grafico",
+      label = "Rede de Ensino (para o Gráfico):",
+      choices = c(
+        "Total Geral" = "total",
+        "Rede Pública (Soma)" = "publico",
+        "Estadual" = "estadual",
+        "Municipal" = "municipal",
+        "Federal" = "federal",
+        "Privada" = "privada"
+      ),
+      selected = "total"
+    ),
+    
     radioButtons(
       inputId = "tipo_valor",
-      label = "Formato da Tabela:",
+      label = "Formato (Gráfico e Tabela):",
       choices = c("Números Absolutos" = "absoluto", "Percentuais (%)" = "percentual"),
       selected = "absoluto"
     ),
-    p(class = "text-muted", "Dica: O mapa exibe o volume total da etapa escolhida para cada município.")
+    
+    p(class = "text-muted", "Nota: No modo percentual, o gráfico exibe a proporção da rede escolhida em relação ao total do município.")
   ),
   
-  # --- ABA 1: MAPA ---
+  # --- ABA 1: GRÁFICO DE RANKING ---
   nav_panel(
-    title = "Mapa de Calor (Matrículas)",
+    title = "Ranking de Municípios",
     card(
       full_screen = TRUE,
-      card_header("Densidade de Matrículas por Município (Passe o mouse)"),
-      leafletOutput("mapa_interativo", height = "600px")
+      card_header("Top 15 Municípios com Maiores Matrículas"),
+      plotOutput("grafico_ranking", height = "550px")
     )
   ),
   
@@ -79,7 +87,7 @@ ui <- page_navbar(
   )
 )
 
-# 4. Lógica do Servidor
+# 3. Lógica do Servidor
 server <- function(input, output, session) {
   
   dados_reativos <- reactive({
@@ -96,52 +104,78 @@ server <- function(input, output, session) {
     return(df)
   })
   
-  # --- CONSTRUÇÃO DO MAPA (COM CORES DE ALTO CONTRASTE E FRONTEIRAS FORTES) ---
-  output$mapa_interativo <- renderLeaflet({
+  # --- CONSTRUÇÃO DO GRÁFICO DE RANKING (COM CÁLCULO BLINDADO) ---
+  output$grafico_ranking <- renderPlot({
     
-    dados_mapa <- dados_reativos() |> 
+    dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado) |>
-      group_by(codigo_municipio) |> 
-      summarise(total_mun = sum(valor_etapa, na.rm = TRUE)) |>
-      ungroup()
+      select(codigo_municipio, municipio, rede, valor_etapa)
     
-    mapa_pr_dados <- mapa_pr |>
-      left_join(dados_mapa, by = c("code_muni" = "codigo_municipio"))
+    tabela_larga <- dados_ano |>
+      pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
+      clean_names()
     
-    mapa_pr_dados$total_mun[is.na(mapa_pr_dados$total_mun)] <- 0
+    if(!"federal" %in% names(tabela_larga)) tabela_larga$federal <- 0
+    if(!"municipal" %in% names(tabela_larga)) tabela_larga$municipal <- 0
+    if(!"estadual" %in% names(tabela_larga)) tabela_larga$estadual <- 0
+    if(!"privada" %in% names(tabela_larga)) tabela_larga$privada <- 0
     
-    # Paleta em tons de Laranja para alto contraste
-    pal <- colorNumeric("Oranges", domain = mapa_pr_dados$total_mun, na.color = "transparent")
+    tabela_larga <- tabela_larga |>
+      mutate(
+        publico = estadual + municipal + federal,
+        total = publico + privada
+      )
     
-    labels_mapa <- sprintf(
-      "<strong>%s</strong><br/>%s matrículas",
-      mapa_pr_dados$name_muni, format(mapa_pr_dados$total_mun, big.mark = ".", scientific = FALSE)
-    ) |> lapply(htmltools::HTML)
+    # Seleção da base de cálculo sem conflitos de vetorização
+    tabela_larga$valor_base <- case_when(
+      input$rede_grafico == "publico" ~ tabela_larga$publico,
+      input$rede_grafico == "estadual" ~ tabela_larga$estadual,
+      input$rede_grafico == "municipal" ~ tabela_larga$municipal,
+      input$rede_grafico == "federal" ~ tabela_larga$federal,
+      input$rede_grafico == "privada" ~ tabela_larga$privada,
+      TRUE ~ tabela_larga$total
+    )
     
-    leaflet(mapa_pr_dados) |>
-      addProviderTiles(providers$CartoDB.Positron) |> # Fundo cinza limpo sem poluição visual
-      addPolygons(
-        fillColor = ~pal(total_mun),
-        weight = 2,          # Fronteiras mais grossas para separar bem os municípios
-        opacity = 1,         
-        color = "#444444",   # Cor cinza escuro forte nas divisas
-        dashArray = "",      
-        fillOpacity = 0.9,
-        highlightOptions = highlightOptions(
-          weight = 5,        # Realce forte ao passar o mouse
-          color = "blue", 
-          dashArray = "",
-          fillOpacity = 1,
-          bringToFront = TRUE
-        ),
-        label = labels_mapa,
-        labelOptions = labelOptions(
-          style = list("font-weight" = "normal", padding = "3px 8px"),
-          textsize = "15px",
-          direction = "auto"
-        )
-      ) |>
-      addLegend(pal = pal, values = ~total_mun, opacity = 0.8, title = "<strong>Total de Matrículas</strong>", position = "bottomright")
+    tabela_larga$valor_final <- if (input$tipo_valor == "percentual" && input$rede_grafico != "total") {
+      ifelse(tabela_larga$total == 0, 0, tabela_larga$valor_base / tabela_larga$total)
+    } else {
+      as.numeric(tabela_larga$valor_base)
+    }
+    
+    metricas <- tabela_larga |>
+      select(municipio, valor_final) |>
+      arrange(desc(valor_final)) |>
+      head(15)
+    
+    metricas$municipio <- factor(metricas$municipio, levels = rev(metricas$municipio))
+    
+    if (input$tipo_valor == "percentual") {
+      ggplot(metricas, aes(x = municipio, y = valor_final, fill = valor_final)) +
+        geom_col(show.legend = FALSE) +
+        coord_flip() +
+        scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+        scale_fill_gradient(low = "#ffcc80", high = "#e65100") +
+        theme_minimal(base_size = 14) +
+        labs(
+          x = "", 
+          y = paste("Proporção de", tools::toTitleCase(input$rede_grafico)),
+          title = paste("Top 15 Municípios - Proporção de", tools::toTitleCase(input$rede_grafico), "(", input$ano_selecionado, ")")
+        ) +
+        theme(panel.grid.major.y = element_blank())
+    } else {
+      ggplot(metricas, aes(x = municipio, y = valor_final, fill = valor_final)) +
+        geom_col(show.legend = FALSE) +
+        coord_flip() +
+        scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ",")) +
+        scale_fill_gradient(low = "#ffe0b2", high = "#bf360c") +
+        theme_minimal(base_size = 14) +
+        labs(
+          x = "", 
+          y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_grafico), ")"),
+          title = paste("Top 15 Municípios - Volume de Matrículas (", input$ano_selecionado, ")")
+        ) +
+        theme(panel.grid.major.y = element_blank())
+    }
   })
   
   # --- CONSTRUÇÃO DA TABELA ---
