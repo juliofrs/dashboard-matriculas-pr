@@ -28,6 +28,20 @@ ui <- page_navbar(
       choices = lista_municipios,
       selected = "Curitiba"
     ),
+    
+    # --- NOVO FILTRO: Etapa de Ensino ---
+    selectInput(
+      inputId = "etapa_ensino",
+      label = "Etapa de Ensino:",
+      choices = c(
+        "Geral (Todas as Etapas)" = "geral", 
+        "Anos Iniciais (6 a 10 anos)" = "ai", 
+        "Anos Finais (11 a 14 anos)" = "af", 
+        "Ensino Médio (15 a 17 anos)" = "em"
+      ),
+      selected = "geral"
+    ),
+    
     hr(),
     radioButtons(
       inputId = "tipo_valor",
@@ -66,16 +80,35 @@ ui <- page_navbar(
 # 3. Lógica do Servidor
 server <- function(input, output, session) {
   
+  # --- BASE REATIVA DE ACORDO COM A ETAPA DE ENSINO ---
+  # Aqui o R decide qual coluna da planilha vai ser usada nos cálculos
+  dados_reativos <- reactive({
+    df <- dados_matriculas
+    
+    if (input$etapa_ensino == "geral") {
+      df$valor_etapa <- df$total_matriculas
+    } else if (input$etapa_ensino == "ai") {
+      df$valor_etapa <- df$matriculas_6_a_10_anos
+    } else if (input$etapa_ensino == "af") {
+      df$valor_etapa <- df$matriculas_11_a_14_anos
+    } else if (input$etapa_ensino == "em") {
+      df$valor_etapa <- df$matriculas_15_a_17_anos
+    }
+    
+    return(df)
+  })
+  
   # --- LÓGICA DO GRÁFICO ---
   output$grafico_matriculas <- renderPlot({
-    dados_grafico <- dados_matriculas |> filter(municipio == input$municipio_selecionado)
+    # Substituímos "dados_matriculas" por "dados_reativos()"
+    dados_grafico <- dados_reativos() |> filter(municipio == input$municipio_selecionado)
     
     if (input$tipo_valor == "percentual") {
       dados_grafico <- dados_grafico |>
         group_by(ano) |>
         mutate(
-          total_do_ano = sum(total_matriculas),
-          valor_exibir = ifelse(total_do_ano == 0, 0, total_matriculas / total_do_ano)
+          total_do_ano = sum(valor_etapa),
+          valor_exibir = ifelse(total_do_ano == 0, 0, valor_etapa / total_do_ano)
         ) |>
         ungroup()
       
@@ -88,23 +121,25 @@ server <- function(input, output, session) {
         theme(text = element_text(size = 14))
       
     } else {
-      ggplot(dados_grafico, aes(x = as.factor(ano), y = total_matriculas, fill = rede)) +
+      # Substituímos "total_matriculas" por "valor_etapa"
+      ggplot(dados_grafico, aes(x = as.factor(ano), y = valor_etapa, fill = rede)) +
         geom_col(position = "dodge") +
         scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ",")) + 
         theme_minimal() +
-        labs(x = "Ano", y = "Total de Matrículas", fill = "Rede de Ensino",
-             title = paste("Total de Matrículas em", input$municipio_selecionado)) +
+        labs(x = "Ano", y = "Matrículas", fill = "Rede de Ensino",
+             title = paste("Matrículas em", input$municipio_selecionado)) +
         theme(text = element_text(size = 14))
     }
   })
   
   # --- LÓGICA DA TABELA ---
   output$tabela_dinamica <- renderDT({
-    dados_ano <- dados_matriculas |> filter(ano == input$ano_selecionado) |>
-      select(municipio, rede, total_matriculas, populacao_2024)
+    # Lendo dos dados_reativos() e selecionando a coluna dinâmica 'valor_etapa'
+    dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |>
+      select(municipio, rede, valor_etapa, populacao_2024)
     
     tabela_larga <- dados_ano |>
-      pivot_wider(names_from = rede, values_from = total_matriculas, values_fill = 0) |>
+      pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
       clean_names() 
     
     if(!"federal" %in% names(tabela_larga)) tabela_larga$federal <- 0
@@ -147,5 +182,4 @@ server <- function(input, output, session) {
   })
 }
 
-# 4. Unir UI e Server (Esta é a linha que estava faltando!)
 shinyApp(ui, server)
