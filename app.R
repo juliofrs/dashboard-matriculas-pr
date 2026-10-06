@@ -5,20 +5,37 @@ library(dplyr)
 library(janitor)
 library(DT)
 library(tidyr)
+library(leaflet)
+library(sf)
+library(geobr)
 
-# 1. Carregando os Dados
+# 1. Carregando os Dados do Excel
 caminho_arquivo <- "Matriculas_Municipio_AI_AF_EM_populacao.xlsx"
 dados_matriculas <- read_excel(caminho_arquivo, sheet = "Base") |> clean_names()
 
+# Garante que o código do município seja numérico padrão nos dados
+dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
+
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 
-# 2. Interface (UI) simplificada (sem abas)
-ui <- page_sidebar(
+# 2. Carregando o Mapa Geográfico do Paraná (IBGE)
+mapa_pr <- read_municipality(code_muni = "PR", year = 2020, showProgress = FALSE)
+mapa_pr$code_muni <- as.numeric(mapa_pr$code_muni)
+
+# 3. Interface (UI)
+ui <- page_navbar(
   title = "Dashboard Educacional - Paraná",
   theme = bs_theme(preset = "flatly"),
   
   sidebar = sidebar(
-    title = "Controles",
+    title = "Filtros Globais",
+    
+    selectInput(
+      inputId = "ano_selecionado", 
+      label = "Escolha o Ano:", 
+      choices = lista_anos,
+      selected = max(lista_anos)
+    ),
     
     selectInput(
       inputId = "etapa_ensino",
@@ -35,35 +52,38 @@ ui <- page_sidebar(
     hr(),
     radioButtons(
       inputId = "tipo_valor",
-      label = "Mostrar valores em:",
+      label = "Formato da Tabela:",
       choices = c("Números Absolutos" = "absoluto", "Percentuais (%)" = "percentual"),
       selected = "absoluto"
+    ),
+    p(class = "text-muted", "Dica: O mapa exibe o volume total da etapa escolhida para cada município.")
+  ),
+  
+  # --- ABA 1: MAPA ---
+  nav_panel(
+    title = "Mapa de Calor (Matrículas)",
+    card(
+      full_screen = TRUE,
+      card_header("Densidade de Matrículas por Município (Passe o mouse)"),
+      leafletOutput("mapa_interativo", height = "600px")
     )
   ),
   
-  # Apenas a tabela na área principal
-  card(
-    card_header(
-      class = "d-flex justify-content-between align-items-center",
-      "Detalhamento de Matrículas por Município e Rede",
-      selectInput(
-        inputId = "ano_selecionado", 
-        label = "Filtrar Ano da Tabela:", 
-        choices = lista_anos, 
-        width = "150px"
-      )
-    ),
-    DTOutput("tabela_dinamica")
+  # --- ABA 2: TABELA ---
+  nav_panel(
+    title = "Tabela Detalhada",
+    card(
+      card_header("Detalhamento por Município e Rede de Ensino"),
+      DTOutput("tabela_dinamica")
+    )
   )
 )
 
-# 3. Lógica do Servidor
+# 4. Lógica do Servidor
 server <- function(input, output, session) {
   
-  # Define qual coluna de matrícula usar com base na etapa escolhida
   dados_reativos <- reactive({
     df <- dados_matriculas
-    
     if (input$etapa_ensino == "geral") {
       df$valor_etapa <- df$total_matriculas
     } else if (input$etapa_ensino == "ai") {
@@ -73,11 +93,62 @@ server <- function(input, output, session) {
     } else if (input$etapa_ensino == "em") {
       df$valor_etapa <- df$matriculas_15_a_17_anos
     }
-    
     return(df)
   })
   
-  # Gera a Tabela
+  # --- CONSTRUÇÃO DO MAPA ---
+  output$mapa_interativo <- renderLeaflet({
+    
+    # Agrupa por código do município somando as matrículas do ano escolhido
+    dados_mapa <- dados_reativos() |> 
+      filter(ano == input$ano_selecionado) |>
+      group_by(codigo_municipio) |> 
+      summarise(total_mun = sum(valor_etapa, na.rm = TRUE)) |>
+      ungroup()
+    
+    # Junta os dados geográficos com os dados numéricos
+    mapa_pr_dados <- mapa_pr |>
+      left_join(dados_mapa, by = c("code_muni" = "codigo_municipio"))
+    
+    # Trata eventuais valores NA para evitar erros no Leaflet
+    mapa_pr_dados$total_mun[is.na(mapa_pr_dados$total_mun)] <- 0
+    
+    # Paleta de cores segura
+    pal <- colorNumeric("YlGnBu", domain = mapa_pr_dados$total_mun)
+    
+    # Textos do pop-up ao passar o mouse
+    labels_mapa <- sprintf(
+      "<strong>%s</strong><br/>%s matrículas",
+      mapa_pr_dados$name_muni, format(mapa_pr_dados$total_mun, big.mark = ".", scientific = FALSE)
+    ) |> lapply(htmltools::HTML)
+    
+    leaflet(mapa_pr_dados) |>
+      addTiles() |>
+      addPolygons(
+        fillColor = ~pal(total_mun),
+        weight = 1,
+        opacity = 1,
+        color = "white",
+        dashArray = "3",
+        fillOpacity = 0.8,
+        highlightOptions = highlightOptions(
+          weight = 3,
+          color = "#666",
+          dashArray = "",
+          fillOpacity = 1,
+          bringToFront = TRUE
+        ),
+        label = labels_mapa,
+        labelOptions = labelOptions(
+          style = list("font-weight" = "normal", padding = "3px 8px"),
+          textsize = "15px",
+          direction = "auto"
+        )
+      ) |>
+      addLegend(pal = pal, values = ~total_mun, opacity = 0.7, title = "Total", position = "bottomright")
+  })
+  
+  # --- CONSTRUÇÃO DA TABELA ---
   output$tabela_dinamica <- renderDT({
     dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |>
       select(municipio, rede, valor_etapa, populacao_2024)
