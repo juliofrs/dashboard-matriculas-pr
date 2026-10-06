@@ -96,44 +96,40 @@ server <- function(input, output, session) {
     return(df)
   })
   
-  # --- CONSTRUÇÃO DO MAPA ---
+  # --- CONSTRUÇÃO DO MAPA (COM CORES DE ALTO CONTRASTE E FRONTEIRAS FORTES) ---
   output$mapa_interativo <- renderLeaflet({
     
-    # Agrupa por código do município somando as matrículas do ano escolhido
     dados_mapa <- dados_reativos() |> 
       filter(ano == input$ano_selecionado) |>
       group_by(codigo_municipio) |> 
       summarise(total_mun = sum(valor_etapa, na.rm = TRUE)) |>
       ungroup()
     
-    # Junta os dados geográficos com os dados numéricos
     mapa_pr_dados <- mapa_pr |>
       left_join(dados_mapa, by = c("code_muni" = "codigo_municipio"))
     
-    # Trata eventuais valores NA para evitar erros no Leaflet
     mapa_pr_dados$total_mun[is.na(mapa_pr_dados$total_mun)] <- 0
     
-    # Paleta de cores segura
-    pal <- colorNumeric("YlGnBu", domain = mapa_pr_dados$total_mun)
+    # Paleta em tons de Laranja para alto contraste
+    pal <- colorNumeric("Oranges", domain = mapa_pr_dados$total_mun, na.color = "transparent")
     
-    # Textos do pop-up ao passar o mouse
     labels_mapa <- sprintf(
       "<strong>%s</strong><br/>%s matrículas",
       mapa_pr_dados$name_muni, format(mapa_pr_dados$total_mun, big.mark = ".", scientific = FALSE)
     ) |> lapply(htmltools::HTML)
     
     leaflet(mapa_pr_dados) |>
-      addTiles() |>
+      addProviderTiles(providers$CartoDB.Positron) |> # Fundo cinza limpo sem poluição visual
       addPolygons(
         fillColor = ~pal(total_mun),
-        weight = 1,
-        opacity = 1,
-        color = "white",
-        dashArray = "3",
-        fillOpacity = 0.8,
+        weight = 2,          # Fronteiras mais grossas para separar bem os municípios
+        opacity = 1,         
+        color = "#444444",   # Cor cinza escuro forte nas divisas
+        dashArray = "",      
+        fillOpacity = 0.9,
         highlightOptions = highlightOptions(
-          weight = 3,
-          color = "#666",
+          weight = 5,        # Realce forte ao passar o mouse
+          color = "blue", 
           dashArray = "",
           fillOpacity = 1,
           bringToFront = TRUE
@@ -145,7 +141,7 @@ server <- function(input, output, session) {
           direction = "auto"
         )
       ) |>
-      addLegend(pal = pal, values = ~total_mun, opacity = 0.7, title = "Total", position = "bottomright")
+      addLegend(pal = pal, values = ~total_mun, opacity = 0.8, title = "<strong>Total de Matrículas</strong>", position = "bottomright")
   })
   
   # --- CONSTRUÇÃO DA TABELA ---
