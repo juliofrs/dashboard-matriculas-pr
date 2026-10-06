@@ -3,33 +3,23 @@ library(bslib)
 library(readxl)
 library(dplyr)
 library(janitor)
-library(ggplot2)
 library(DT)
 library(tidyr)
-library(scales) 
 
 # 1. Carregando os Dados
 caminho_arquivo <- "Matriculas_Municipio_AI_AF_EM_populacao.xlsx"
 dados_matriculas <- read_excel(caminho_arquivo, sheet = "Base") |> clean_names()
 
-lista_municipios <- sort(unique(dados_matriculas$municipio))
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 
-# 2. Interface (UI)
-ui <- page_navbar(
+# 2. Interface (UI) simplificada (sem abas)
+ui <- page_sidebar(
   title = "Dashboard Educacional - Paraná",
   theme = bs_theme(preset = "flatly"),
   
   sidebar = sidebar(
-    title = "Controles Globais",
-    selectInput(
-      inputId = "municipio_selecionado",
-      label = "Escolha o Município:",
-      choices = lista_municipios,
-      selected = "Curitiba"
-    ),
+    title = "Controles",
     
-    # --- NOVO FILTRO: Etapa de Ensino ---
     selectInput(
       inputId = "etapa_ensino",
       label = "Etapa de Ensino:",
@@ -51,37 +41,26 @@ ui <- page_navbar(
     )
   ),
   
-  nav_panel(
-    title = "Evolução das Matrículas", 
-    card(
-      card_header("Histórico por Rede de Ensino"),
-      plotOutput("grafico_matriculas")
-    )
-  ),
-  
-  nav_panel(
-    title = "Tabela por Ano",
-    card(
-      card_header(
-        class = "d-flex justify-content-between align-items-center",
-        "Detalhamento de Matrículas por Município e Rede",
-        selectInput(
-          inputId = "ano_selecionado", 
-          label = "Filtrar Ano da Tabela:", 
-          choices = lista_anos, 
-          width = "150px"
-        )
-      ),
-      DTOutput("tabela_dinamica")
-    )
+  # Apenas a tabela na área principal
+  card(
+    card_header(
+      class = "d-flex justify-content-between align-items-center",
+      "Detalhamento de Matrículas por Município e Rede",
+      selectInput(
+        inputId = "ano_selecionado", 
+        label = "Filtrar Ano da Tabela:", 
+        choices = lista_anos, 
+        width = "150px"
+      )
+    ),
+    DTOutput("tabela_dinamica")
   )
 )
 
 # 3. Lógica do Servidor
 server <- function(input, output, session) {
   
-  # --- BASE REATIVA DE ACORDO COM A ETAPA DE ENSINO ---
-  # Aqui o R decide qual coluna da planilha vai ser usada nos cálculos
+  # Define qual coluna de matrícula usar com base na etapa escolhida
   dados_reativos <- reactive({
     df <- dados_matriculas
     
@@ -98,43 +77,8 @@ server <- function(input, output, session) {
     return(df)
   })
   
-  # --- LÓGICA DO GRÁFICO ---
-  output$grafico_matriculas <- renderPlot({
-    # Substituímos "dados_matriculas" por "dados_reativos()"
-    dados_grafico <- dados_reativos() |> filter(municipio == input$municipio_selecionado)
-    
-    if (input$tipo_valor == "percentual") {
-      dados_grafico <- dados_grafico |>
-        group_by(ano) |>
-        mutate(
-          total_do_ano = sum(valor_etapa),
-          valor_exibir = ifelse(total_do_ano == 0, 0, valor_etapa / total_do_ano)
-        ) |>
-        ungroup()
-      
-      ggplot(dados_grafico, aes(x = as.factor(ano), y = valor_exibir, fill = rede)) +
-        geom_col(position = "dodge") +
-        scale_y_continuous(labels = percent_format()) + 
-        theme_minimal() +
-        labs(x = "Ano", y = "% de Matrículas", fill = "Rede de Ensino", 
-             title = paste("Proporção de Matrículas em", input$municipio_selecionado)) +
-        theme(text = element_text(size = 14))
-      
-    } else {
-      # Substituímos "total_matriculas" por "valor_etapa"
-      ggplot(dados_grafico, aes(x = as.factor(ano), y = valor_etapa, fill = rede)) +
-        geom_col(position = "dodge") +
-        scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ",")) + 
-        theme_minimal() +
-        labs(x = "Ano", y = "Matrículas", fill = "Rede de Ensino",
-             title = paste("Matrículas em", input$municipio_selecionado)) +
-        theme(text = element_text(size = 14))
-    }
-  })
-  
-  # --- LÓGICA DA TABELA ---
+  # Gera a Tabela
   output$tabela_dinamica <- renderDT({
-    # Lendo dos dados_reativos() e selecionando a coluna dinâmica 'valor_etapa'
     dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |>
       select(municipio, rede, valor_etapa, populacao_2024)
     
