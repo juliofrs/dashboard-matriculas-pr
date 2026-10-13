@@ -11,10 +11,20 @@ library(leaflet)
 library(sf)
 library(geobr)
 
-# 1. Carregando os Dados do Excel
-caminho_arquivo <- "Matriculas_Municipio_AI_AF_EM_populacao.xlsx"
-dados_matriculas <- read_excel(caminho_arquivo, sheet = "Base") |> clean_names()
+# 1. Carregando os Dados do Novo Excel
+caminho_arquivo <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
+
+# Lê a base principal
+dados_matriculas <- read_excel(caminho_arquivo, sheet = "Plan1") |> clean_names()
 dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
+
+# Lê a população e junta aos dados
+dados_populacao <- read_excel(caminho_arquivo, sheet = "População") |> clean_names()
+dados_populacao$codigo_ibge <- as.numeric(dados_populacao$codigo_ibge)
+
+dados_matriculas <- dados_matriculas |>
+  left_join(dados_populacao |> select(codigo_ibge, populacao_2024), 
+            by = c("codigo_municipio" = "codigo_ibge"))
 
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 
@@ -39,14 +49,35 @@ ui <- page_navbar(
       selected = max(lista_anos)
     ),
     
+    hr(),
+    
+    # Filtro 1: Etapa de Ensino
     selectInput(
       inputId = "etapa_ensino",
-      label = "Etapa de Ensino:",
+      label = "Por Etapa de Ensino:",
       choices = c(
         "Geral (Todas as Etapas)" = "geral", 
-        "Anos Iniciais (6 a 10 anos)" = "ai", 
-        "Anos Finais (11 a 14 anos)" = "af", 
-        "Ensino Médio (15 a 17 anos)" = "em"
+        "Creche" = "creche",
+        "Pré-escola" = "pre_escola",
+        "Anos Iniciais" = "ai", 
+        "Anos Finais" = "af", 
+        "Ensino Médio" = "em"
+      ),
+      selected = "geral"
+    ),
+    
+    # Filtro 2: Faixa Etária
+    selectInput(
+      inputId = "faixa_etaria",
+      label = "Por Faixa Etária:",
+      choices = c(
+        "Geral (Todas as Idades)" = "geral",
+        "0 a 3 anos" = "0_3",
+        "4 a 5 anos" = "4_5",
+        "6 a 10 anos" = "6_10",
+        "11 a 14 anos" = "11_14",
+        "15 a 17 anos" = "15_17",
+        "18 anos ou mais" = "18_mais"
       ),
       selected = "geral"
     ),
@@ -74,7 +105,7 @@ ui <- page_navbar(
       selected = "absoluto"
     ),
     
-    p(class = "text-muted", "Nota: No modo percentual, os valores exibem a proporção da rede escolhida em relação ao total do município.")
+    p(class = "text-muted", "Dica: Ao selecionar um recorte (Etapa ou Idade), o outro será resetado automaticamente para evitar conflitos.")
   ),
   
   # --- ABA 1: RANKING ---
@@ -110,17 +141,45 @@ ui <- page_navbar(
 # 4. Lógica do Servidor
 server <- function(input, output, session) {
   
+  # --- Lógica Inteligente para os Filtros ---
+  # Se o usuário mudar a Etapa de Ensino, reseta a Faixa Etária
+  observeEvent(input$etapa_ensino, {
+    if (input$etapa_ensino != "geral") {
+      updateSelectInput(session, "faixa_etaria", selected = "geral")
+    }
+  }, ignoreInit = TRUE)
+  
+  # Se o usuário mudar a Faixa Etária, reseta a Etapa de Ensino
+  observeEvent(input$faixa_etaria, {
+    if (input$faixa_etaria != "geral") {
+      updateSelectInput(session, "etapa_ensino", selected = "geral")
+    }
+  }, ignoreInit = TRUE)
+  
+  # --- Preparação Dinâmica dos Dados ---
   dados_reativos <- reactive({
     df <- dados_matriculas
-    if (input$etapa_ensino == "geral") {
-      df$valor_etapa <- df$total_matriculas
-    } else if (input$etapa_ensino == "ai") {
-      df$valor_etapa <- df$matriculas_6_a_10_anos
-    } else if (input$etapa_ensino == "af") {
-      df$valor_etapa <- df$matriculas_11_a_14_anos
-    } else if (input$etapa_ensino == "em") {
-      df$valor_etapa <- df$matriculas_15_a_17_anos
+    coluna_alvo <- "total_educacao_basica"
+    
+    # Verifica qual filtro está ativo e direciona para a nova coluna correspondente
+    if (input$faixa_etaria != "geral") {
+      if (input$faixa_etaria == "0_3") { coluna_alvo <- "matriculas_0_a_3_anos" }
+      else if (input$faixa_etaria == "4_5") { coluna_alvo <- "matriculas_4_a_5_anos" }
+      else if (input$faixa_etaria == "6_10") { coluna_alvo <- "matriculas_6_a_10_anos" }
+      else if (input$faixa_etaria == "11_14") { coluna_alvo <- "matriculas_11_a_14_anos" }
+      else if (input$faixa_etaria == "15_17") { coluna_alvo <- "matriculas_15_a_17_anos" }
+      else if (input$faixa_etaria == "18_mais") { coluna_alvo <- "matriculas_18_anos_ou_mais" }
+      
+    } else if (input$etapa_ensino != "geral") {
+      if (input$etapa_ensino == "creche") { coluna_alvo <- "matriculas_creche" }
+      else if (input$etapa_ensino == "pre_escola") { coluna_alvo <- "matriculas_pre_escola" }
+      else if (input$etapa_ensino == "ai") { coluna_alvo <- "matriculas_anos_iniciais" }
+      else if (input$etapa_ensino == "af") { coluna_alvo <- "matriculas_anos_finais" }
+      else if (input$etapa_ensino == "em") { coluna_alvo <- "matriculas_ensino_medio" }
     }
+    
+    # Repassa os valores da coluna correta para que os gráficos e tabelas leiam facilmente
+    df$valor_etapa <- df[[coluna_alvo]]
     return(df)
   })
   
