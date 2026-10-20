@@ -362,7 +362,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABELA DETALHADA COM LINHA FIXA DO ESTADO NO CABEÇALHO ---
+  # --- TABELA DETALHADA COM LINHA FIXA E ALINHAMENTO À DIREITA ---
   output$tabela_dinamica <- renderDT({
     dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |> select(municipio, rede, valor_etapa, populacao_2024)
     tabela_larga <- dados_ano |> pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> clean_names() 
@@ -377,7 +377,7 @@ server <- function(input, output, session) {
       select(municipio, estadual, municipal, federal, publico, privada, total, populacao_2024) |>
       arrange(desc(total))
     
-    # 1. Calcula os Totais Consolidados do Estado do Paraná
+    # 1. Totais Consolidados do Estado
     val_est <- sum(tabela_municipios$estadual, na.rm = TRUE)
     val_mun <- sum(tabela_municipios$municipal, na.rm = TRUE)
     val_fed <- sum(tabela_municipios$federal, na.rm = TRUE)
@@ -386,7 +386,7 @@ server <- function(input, output, session) {
     val_tot <- sum(tabela_municipios$total, na.rm = TRUE)
     val_pop <- sum(tabela_municipios$populacao_2024, na.rm = TRUE)
     
-    # 2. Formatação dos valores para a linha fixa do Estado no cabeçalho
+    # 2. Formatação explícita com alinhamento
     if (input$tipo_valor == "percentual") {
       p_est <- ifelse(val_tot == 0, "0,0%", percent(val_est / val_tot, accuracy = 0.1, decimal.mark = ","))
       p_mun <- ifelse(val_tot == 0, "0,0%", percent(val_mun / val_tot, accuracy = 0.1, decimal.mark = ","))
@@ -396,7 +396,6 @@ server <- function(input, output, session) {
       p_tot <- "100,0%"
       p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
       
-      # Formata a tabela de municípios para percentual
       tabela_municipios <- tabela_municipios |> mutate(
         estadual = ifelse(total == 0, 0, estadual / total),
         municipal = ifelse(total == 0, 0, municipal / total),
@@ -414,7 +413,7 @@ server <- function(input, output, session) {
       p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
-    # 3. Define a estrutura de cabeçalho fixa (sketch)
+    # 3. Cabeçalho fixo (sketch) com `text-align: right` alinhado perfeitamente com cada coluna
     sketch <- htmltools::withTags(table(
       class = 'display',
       thead(
@@ -429,27 +428,26 @@ server <- function(input, output, session) {
           th("População (2024)")
         ),
         tr(
-          style = "background-color: #e9ecef; font-weight: bold; color: #1a252f; font-size: 14px;",
-          th("PARANÁ (Total Estadual)"),
-          th(p_est),
-          th(p_mun),
-          th(p_fed),
-          th(p_pub),
-          th(p_priv),
-          th(p_tot),
-          th(p_pop)
+          style = "background-color: #e2e8f0; font-weight: bold; color: #0f172a; font-size: 14px;",
+          th(style = "text-align: left; padding: 8px 10px;", "PARANÁ (Total Estadual)"),
+          th(style = "text-align: right; padding: 8px 10px;", p_est),
+          th(style = "text-align: right; padding: 8px 10px;", p_mun),
+          th(style = "text-align: right; padding: 8px 10px;", p_fed),
+          th(style = "text-align: right; padding: 8px 10px;", p_pub),
+          th(style = "text-align: right; padding: 8px 10px;", p_priv),
+          th(style = "text-align: right; padding: 8px 10px;", p_tot),
+          th(style = "text-align: right; padding: 8px 10px;", p_pop)
         )
       )
     ))
     
-    # 4. Renderiza a tabela mantendo o cabeçalho duplo e ordenação no topo
     tabela_dt <- datatable(
       tabela_municipios,
       container = sketch,
       rownames = FALSE,
       options = list(
         pageLength = 10,
-        orderCellsTop = TRUE, # Garante que a ordenação seja ativada na linha 1 (títulos)
+        orderCellsTop = TRUE,
         language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Portuguese-Brasil.json')
       )
     )
