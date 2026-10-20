@@ -49,7 +49,6 @@ ui <- page_navbar(
       selected = max(lista_anos)
     ),
     
-    # Novo Filtro de Municípios exclusivo para o Histórico
     selectizeInput(
       inputId = "municipios_historico",
       label = "Comparar Municípios (no Histórico):",
@@ -239,7 +238,7 @@ server <- function(input, output, session) {
         geom_col(show.legend = FALSE) +
         coord_flip() +
         scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
-        scale_fill_gradient(low = "#ffcc80", high = "#e65100") +
+        scale_fill_gradient(low = "#fdba74", high = "#c2410c") +
         theme_minimal(base_size = 14) +
         labs(x = "", y = paste("Proporção de", tools::toTitleCase(input$rede_selecionada))) +
         theme(panel.grid.major.y = element_blank())
@@ -248,14 +247,14 @@ server <- function(input, output, session) {
         geom_col(show.legend = FALSE) +
         coord_flip() +
         scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ",")) +
-        scale_fill_gradient(low = "#ffe0b2", high = "#bf360c") +
+        scale_fill_gradient(low = "#fed7aa", high = "#9a3412") +
         theme_minimal(base_size = 14) +
         labs(x = "", y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")")) +
         theme(panel.grid.major.y = element_blank())
     }
   })
   
-  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA COM COMPARATIVO MUNICIPAL ---
+  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA COM PALETA DE ALTO CONTRASTE ---
   output$grafico_historico <- renderPlot({
     df_todos <- dados_reativos()
     
@@ -332,20 +331,39 @@ server <- function(input, output, session) {
       df_plot <- bind_rows(df_plot, df_muni_plot)
     }
     
-    # Ordena os níveis para garantir o estado como primeiro item na legenda
+    # Ordenação dos fatores
     locais_unicos <- unique(df_plot$local)
     locais_ordenados <- c("PARANÁ (Total Estadual)", setdiff(locais_unicos, "PARANÁ (Total Estadual)"))
     df_plot$local <- factor(df_plot$local, levels = locais_ordenados)
     
+    # Paleta de Alto Contraste (Cores Vivas e Escuras)
+    paleta_vibrante <- c(
+      "PARANÁ (Total Estadual)" = "#0F172A", # Azul Marinho Quase Preto
+      "#DC2626", # Vermelho Intenso
+      "#2563EB", # Azul Royal
+      "#059669", # Verde Esmeralda
+      "#D97706", # Âmbar / Laranja Escuro
+      "#7C3AED", # Roxo Vibrante
+      "#0891B2", # Ciano Marinho Escuro
+      "#DB2777"  # Magenta Escuro
+    )
+    
+    # Atribui cores suficientes aos níveis
+    cores_finais <- setNames(
+      c("#0F172A", rep(c("#DC2626", "#2563EB", "#059669", "#D97706", "#7C3AED", "#0891B2", "#DB2777"), length.out = length(locais_ordenados) - 1)),
+      locais_ordenados
+    )
+    
     max_y <- max(df_plot$valor_final, na.rm = TRUE)
     if (is.na(max_y) || max_y == 0) max_y <- 1
     
-    # 3. Renderização do Gráfico Multi-linhas
+    # 3. Renderização com Cores de Alto Contraste e Texto em Negrito
     if (input$tipo_valor == "percentual") {
       ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
-        geom_line(linewidth = 1.2) +
-        geom_point(size = 3) +
-        geom_text(aes(label = percent(valor_final, accuracy = 0.1)), vjust = -1.2, size = 3.8, show.legend = FALSE) +
+        geom_line(linewidth = 1.3) +
+        geom_point(size = 3.5) +
+        geom_text(aes(label = percent(valor_final, accuracy = 0.1)), vjust = -1.2, size = 4, fontface = "bold", show.legend = FALSE) +
+        scale_color_manual(values = cores_finais) +
         scale_y_continuous(labels = percent_format(), limits = c(0, max_y * 1.25)) +
         scale_x_continuous(breaks = unique(df_plot$ano)) +
         theme_minimal(base_size = 14) +
@@ -357,13 +375,15 @@ server <- function(input, output, session) {
         theme(
           legend.position = "top",
           panel.grid.minor.x = element_blank(),
-          legend.title = element_text(face = "bold")
+          legend.title = element_text(face = "bold"),
+          legend.text = element_text(size = 11, face = "bold")
         )
     } else {
       ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
-        geom_line(linewidth = 1.2) +
-        geom_point(size = 3) +
-        geom_text(aes(label = comma(valor_final, big.mark = ".", decimal.mark = ",")), vjust = -1.5, size = 3.8, show.legend = FALSE) +
+        geom_line(linewidth = 1.3) +
+        geom_point(size = 3.5) +
+        geom_text(aes(label = comma(valor_final, big.mark = ".", decimal.mark = ",")), vjust = -1.5, size = 4, fontface = "bold", show.legend = FALSE) +
+        scale_color_manual(values = cores_finais) +
         scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ","), limits = c(0, max_y * 1.25)) +
         scale_x_continuous(breaks = unique(df_plot$ano)) +
         theme_minimal(base_size = 14) +
@@ -375,7 +395,8 @@ server <- function(input, output, session) {
         theme(
           legend.position = "top",
           panel.grid.minor.x = element_blank(),
-          legend.title = element_text(face = "bold")
+          legend.title = element_text(face = "bold"),
+          legend.text = element_text(size = 11, face = "bold")
         )
     }
   })
@@ -442,7 +463,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABELA DETALHADA COM LINHA FIXA E ALINHAMENTO À DIREITA ---
+  # --- TABELA DETALHADA ---
   output$tabela_dinamica <- renderDT({
     dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |> select(municipio, rede, valor_etapa, populacao_2024)
     tabela_larga <- dados_ano |> pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> clean_names() 
