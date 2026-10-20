@@ -362,7 +362,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABELA DETALHADA COM LINHA DO ESTADO ---
+  # --- TABELA DETALHADA COM LINHA FIXA DO ESTADO NO CABEÇALHO ---
   output$tabela_dinamica <- renderDT({
     dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |> select(municipio, rede, valor_etapa, populacao_2024)
     tabela_larga <- dados_ano |> pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> clean_names() 
@@ -377,57 +377,88 @@ server <- function(input, output, session) {
       select(municipio, estadual, municipal, federal, publico, privada, total, populacao_2024) |>
       arrange(desc(total))
     
-    # 1. Calcula o Total Consolidado do Estado do Paraná
-    linha_parana <- tibble(
-      municipio = "PARANÁ (Total Estadual)",
-      estadual = sum(tabela_municipios$estadual, na.rm = TRUE),
-      municipal = sum(tabela_municipios$municipal, na.rm = TRUE),
-      federal = sum(tabela_municipios$federal, na.rm = TRUE),
-      publico = sum(tabela_municipios$publico, na.rm = TRUE),
-      privada = sum(tabela_municipios$privada, na.rm = TRUE),
-      total = sum(tabela_municipios$total, na.rm = TRUE),
-      populacao_2024 = sum(tabela_municipios$populacao_2024, na.rm = TRUE)
-    )
+    # 1. Calcula os Totais Consolidados do Estado do Paraná
+    val_est <- sum(tabela_municipios$estadual, na.rm = TRUE)
+    val_mun <- sum(tabela_municipios$municipal, na.rm = TRUE)
+    val_fed <- sum(tabela_municipios$federal, na.rm = TRUE)
+    val_pub <- sum(tabela_municipios$publico, na.rm = TRUE)
+    val_priv <- sum(tabela_municipios$privada, na.rm = TRUE)
+    val_tot <- sum(tabela_municipios$total, na.rm = TRUE)
+    val_pop <- sum(tabela_municipios$populacao_2024, na.rm = TRUE)
     
-    # 2. Une a linha do Estado no topo
-    tabela_final <- bind_rows(linha_parana, tabela_municipios)
-    
-    # 3. Se for percentual, calcula as proporções para todos (inclusive para o Estado)
+    # 2. Formatação dos valores para a linha fixa do Estado no cabeçalho
     if (input$tipo_valor == "percentual") {
-      tabela_final <- tabela_final |> mutate(
+      p_est <- ifelse(val_tot == 0, "0,0%", percent(val_est / val_tot, accuracy = 0.1, decimal.mark = ","))
+      p_mun <- ifelse(val_tot == 0, "0,0%", percent(val_mun / val_tot, accuracy = 0.1, decimal.mark = ","))
+      p_fed <- ifelse(val_tot == 0, "0,0%", percent(val_fed / val_tot, accuracy = 0.1, decimal.mark = ","))
+      p_pub <- ifelse(val_tot == 0, "0,0%", percent(val_pub / val_tot, accuracy = 0.1, decimal.mark = ","))
+      p_priv <- ifelse(val_tot == 0, "0,0%", percent(val_priv / val_tot, accuracy = 0.1, decimal.mark = ","))
+      p_tot <- "100,0%"
+      p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
+      
+      # Formata a tabela de municípios para percentual
+      tabela_municipios <- tabela_municipios |> mutate(
         estadual = ifelse(total == 0, 0, estadual / total),
         municipal = ifelse(total == 0, 0, municipal / total),
         federal = ifelse(total == 0, 0, federal / total),
         publico = ifelse(total == 0, 0, publico / total),
         privada = ifelse(total == 0, 0, privada / total)
       )
+    } else {
+      p_est <- comma(val_est, big.mark = ".", decimal.mark = ",")
+      p_mun <- comma(val_mun, big.mark = ".", decimal.mark = ",")
+      p_fed <- comma(val_fed, big.mark = ".", decimal.mark = ",")
+      p_pub <- comma(val_pub, big.mark = ".", decimal.mark = ",")
+      p_priv <- comma(val_priv, big.mark = ".", decimal.mark = ",")
+      p_tot <- comma(val_tot, big.mark = ".", decimal.mark = ",")
+      p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
+    # 3. Define a estrutura de cabeçalho fixa (sketch)
+    sketch <- htmltools::withTags(table(
+      class = 'display',
+      thead(
+        tr(
+          th("Município"),
+          th("Estadual"),
+          th("Municipal"),
+          th("Federal"),
+          th("Público"),
+          th("Privado"),
+          th("Total Absoluto"),
+          th("População (2024)")
+        ),
+        tr(
+          style = "background-color: #e9ecef; font-weight: bold; color: #1a252f; font-size: 14px;",
+          th("PARANÁ (Total Estadual)"),
+          th(p_est),
+          th(p_mun),
+          th(p_fed),
+          th(p_pub),
+          th(p_priv),
+          th(p_tot),
+          th(p_pop)
+        )
+      )
+    ))
+    
+    # 4. Renderiza a tabela mantendo o cabeçalho duplo e ordenação no topo
     tabela_dt <- datatable(
-      tabela_final,
+      tabela_municipios,
+      container = sketch,
       rownames = FALSE,
       options = list(
-        pageLength = 10, 
+        pageLength = 10,
+        orderCellsTop = TRUE, # Garante que a ordenação seja ativada na linha 1 (títulos)
         language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Portuguese-Brasil.json')
-      ),
-      colnames = c("Município", "Estadual", "Municipal", "Federal", "Público", "Privado", "Total Absoluto", "População (2024)")
+      )
     )
     
     if (input$tipo_valor == "percentual") {
       tabela_dt <- tabela_dt |> formatPercentage(c("estadual", "municipal", "federal", "publico", "privada"), 1) 
     } else {
-      # Formatação com ponto de milhar para os valores absolutos ficarem bem legíveis
       tabela_dt <- tabela_dt |> formatCurrency(c("estadual", "municipal", "federal", "publico", "privada", "total", "populacao_2024"), currency = "", interval = 3, mark = ".", digits = 0)
     }
-    
-    # Destaque em negrito e fundo cinza claro para a primeira linha (Paraná)
-    tabela_dt <- tabela_dt |> 
-      formatStyle(
-        'municipio',
-        target = 'row',
-        fontWeight = styleEqual("PARANÁ (Total Estadual)", "bold"),
-        backgroundColor = styleEqual("PARANÁ (Total Estadual)", "#f1f3f5")
-      )
     
     tabela_dt 
   })
