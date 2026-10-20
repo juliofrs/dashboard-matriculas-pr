@@ -27,6 +27,7 @@ dados_matriculas <- dados_matriculas |>
             by = c("codigo_municipio" = "codigo_ibge"))
 
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
+lista_municipios <- sort(unique(dados_matriculas$municipio))
 
 # 2. Carregando o Mapa Geográfico do Paraná e convertendo para EPSG:4326
 mapa_pr <- read_municipality(code_muni = "PR", year = 2020, showProgress = FALSE) |>
@@ -46,6 +47,16 @@ ui <- page_navbar(
       label = "Escolha o Ano (exceto Histórico):", 
       choices = lista_anos,
       selected = max(lista_anos)
+    ),
+    
+    # Novo Filtro de Municípios exclusivo para o Histórico
+    selectizeInput(
+      inputId = "municipios_historico",
+      label = "Comparar Municípios (no Histórico):",
+      choices = lista_municipios,
+      multiple = TRUE,
+      selected = NULL,
+      options = list(placeholder = 'Escolha um ou mais municípios...', plugins = list('remove_button'))
     ),
     
     hr(),
@@ -122,7 +133,7 @@ ui <- page_navbar(
     title = "Evolução Histórica",
     card(
       full_screen = TRUE,
-      card_header("Tendência Estadual de 2016 a 2025"),
+      card_header("Comparativo Histórico de 2016 a 2025 (Estado x Municípios)"),
       plotOutput("grafico_historico", height = "550px")
     )
   ),
@@ -244,59 +255,128 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA ---
+  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA COM COMPARATIVO MUNICIPAL ---
   output$grafico_historico <- renderPlot({
-    df_todos_anos <- dados_reativos() |> select(ano, rede, valor_etapa)
+    df_todos <- dados_reativos()
     
-    resumo_estadual <- df_todos_anos |>
+    # 1. Agregação Estadual (PARANÁ)
+    resumo_estado <- df_todos |>
       group_by(ano, rede) |>
       summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
       pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
       clean_names()
     
-    if(!"federal" %in% names(resumo_estadual)) resumo_estadual$federal <- 0
-    if(!"municipal" %in% names(resumo_estadual)) resumo_estadual$municipal <- 0
-    if(!"estadual" %in% names(resumo_estadual)) resumo_estadual$estadual <- 0
-    if(!"privada" %in% names(resumo_estadual)) resumo_estadual$privada <- 0
+    if(!"federal" %in% names(resumo_estado)) resumo_estado$federal <- 0
+    if(!"municipal" %in% names(resumo_estado)) resumo_estado$municipal <- 0
+    if(!"estadual" %in% names(resumo_estado)) resumo_estado$estadual <- 0
+    if(!"privada" %in% names(resumo_estado)) resumo_estado$privada <- 0
     
-    resumo_estadual <- resumo_estadual |>
+    resumo_estado <- resumo_estado |>
       mutate(publico = estadual + municipal + federal, total = publico + privada)
     
-    resumo_estadual$valor_base <- case_when(
-      input$rede_selecionada == "publico" ~ resumo_estadual$publico,
-      input$rede_selecionada == "estadual" ~ resumo_estadual$estadual,
-      input$rede_selecionada == "municipal" ~ resumo_estadual$municipal,
-      input$rede_selecionada == "federal" ~ resumo_estadual$federal,
-      input$rede_selecionada == "privada" ~ resumo_estadual$privada,
-      TRUE ~ resumo_estadual$total
+    resumo_estado$valor_base <- case_when(
+      input$rede_selecionada == "publico" ~ resumo_estado$publico,
+      input$rede_selecionada == "estadual" ~ resumo_estado$estadual,
+      input$rede_selecionada == "municipal" ~ resumo_estado$municipal,
+      input$rede_selecionada == "federal" ~ resumo_estado$federal,
+      input$rede_selecionada == "privada" ~ resumo_estado$privada,
+      TRUE ~ resumo_estado$total
     )
     
-    resumo_estadual$valor_final <- if (input$tipo_valor == "percentual" && input$rede_selecionada != "total") {
-      ifelse(resumo_estadual$total == 0, 0, resumo_estadual$valor_base / resumo_estadual$total)
+    resumo_estado$valor_final <- if (input$tipo_valor == "percentual" && input$rede_selecionada != "total") {
+      ifelse(resumo_estado$total == 0, 0, resumo_estado$valor_base / resumo_estado$total)
     } else {
-      as.numeric(resumo_estadual$valor_base)
+      as.numeric(resumo_estado$valor_base)
     }
     
+    df_plot <- resumo_estado |>
+      mutate(local = "PARANÁ (Total Estadual)") |>
+      select(ano, local, valor_final)
+    
+    # 2. Agregação dos Municípios Selecionados
+    if (!is.null(input$municipios_historico) && length(input$municipios_historico) > 0) {
+      df_muni <- df_todos |>
+        filter(municipio %in% input$municipios_historico) |>
+        group_by(ano, municipio, rede) |>
+        summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
+        pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
+        clean_names()
+      
+      if(!"federal" %in% names(df_muni)) df_muni$federal <- 0
+      if(!"municipal" %in% names(df_muni)) df_muni$municipal <- 0
+      if(!"estadual" %in% names(df_muni)) df_muni$estadual <- 0
+      if(!"privada" %in% names(df_muni)) df_muni$privada <- 0
+      
+      df_muni <- df_muni |>
+        mutate(publico = estadual + municipal + federal, total = publico + privada)
+      
+      df_muni$valor_base <- case_when(
+        input$rede_selecionada == "publico" ~ df_muni$publico,
+        input$rede_selecionada == "estadual" ~ df_muni$estadual,
+        input$rede_selecionada == "municipal" ~ df_muni$municipal,
+        input$rede_selecionada == "federal" ~ df_muni$federal,
+        input$rede_selecionada == "privada" ~ df_muni$privada,
+        TRUE ~ df_muni$total
+      )
+      
+      df_muni$valor_final <- if (input$tipo_valor == "percentual" && input$rede_selecionada != "total") {
+        ifelse(df_muni$total == 0, 0, df_muni$valor_base / df_muni$total)
+      } else {
+        as.numeric(df_muni$valor_base)
+      }
+      
+      df_muni_plot <- df_muni |>
+        rename(local = municipio) |>
+        select(ano, local, valor_final)
+      
+      df_plot <- bind_rows(df_plot, df_muni_plot)
+    }
+    
+    # Ordena os níveis para garantir o estado como primeiro item na legenda
+    locais_unicos <- unique(df_plot$local)
+    locais_ordenados <- c("PARANÁ (Total Estadual)", setdiff(locais_unicos, "PARANÁ (Total Estadual)"))
+    df_plot$local <- factor(df_plot$local, levels = locais_ordenados)
+    
+    max_y <- max(df_plot$valor_final, na.rm = TRUE)
+    if (is.na(max_y) || max_y == 0) max_y <- 1
+    
+    # 3. Renderização do Gráfico Multi-linhas
     if (input$tipo_valor == "percentual") {
-      ggplot(resumo_estadual, aes(x = ano, y = valor_final)) +
-        geom_line(color = "#1565c0", linewidth = 1.2) +
-        geom_point(color = "#0d47a1", size = 3) +
-        geom_text(aes(label = percent(valor_final, accuracy = 0.1)), vjust = -1.5, size = 4) +
-        scale_y_continuous(labels = percent_format(), limits = c(0, max(resumo_estadual$valor_final) * 1.2)) +
-        scale_x_continuous(breaks = unique(resumo_estadual$ano)) +
+      ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
+        geom_line(linewidth = 1.2) +
+        geom_point(size = 3) +
+        geom_text(aes(label = percent(valor_final, accuracy = 0.1)), vjust = -1.2, size = 3.8, show.legend = FALSE) +
+        scale_y_continuous(labels = percent_format(), limits = c(0, max_y * 1.25)) +
+        scale_x_continuous(breaks = unique(df_plot$ano)) +
         theme_minimal(base_size = 14) +
-        labs(x = "Ano", y = paste("Proporção (", tools::toTitleCase(input$rede_selecionada), ")")) +
-        theme(panel.grid.minor.x = element_blank())
+        labs(
+          x = "Ano", 
+          y = paste("Proporção (", tools::toTitleCase(input$rede_selecionada), ")"),
+          color = "Localidade"
+        ) +
+        theme(
+          legend.position = "top",
+          panel.grid.minor.x = element_blank(),
+          legend.title = element_text(face = "bold")
+        )
     } else {
-      ggplot(resumo_estadual, aes(x = ano, y = valor_final)) +
-        geom_line(color = "#2e7d32", linewidth = 1.2) +
-        geom_point(color = "#1b5e20", size = 3) +
-        geom_text(aes(label = comma(valor_final, big.mark = ".", decimal.mark = ",")), vjust = -1.5, size = 4) +
-        scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ","), limits = c(0, max(resumo_estadual$valor_final) * 1.15)) +
-        scale_x_continuous(breaks = unique(resumo_estadual$ano)) +
+      ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
+        geom_line(linewidth = 1.2) +
+        geom_point(size = 3) +
+        geom_text(aes(label = comma(valor_final, big.mark = ".", decimal.mark = ",")), vjust = -1.5, size = 3.8, show.legend = FALSE) +
+        scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ","), limits = c(0, max_y * 1.25)) +
+        scale_x_continuous(breaks = unique(df_plot$ano)) +
         theme_minimal(base_size = 14) +
-        labs(x = "Ano", y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")")) +
-        theme(panel.grid.minor.x = element_blank())
+        labs(
+          x = "Ano", 
+          y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")"),
+          color = "Localidade"
+        ) +
+        theme(
+          legend.position = "top",
+          panel.grid.minor.x = element_blank(),
+          legend.title = element_text(face = "bold")
+        )
     }
   })
   
@@ -413,7 +493,7 @@ server <- function(input, output, session) {
       p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
-    # 3. Cabeçalho fixo (sketch) com `text-align: right` alinhado perfeitamente com cada coluna
+    # 3. Cabeçalho fixo (sketch)
     sketch <- htmltools::withTags(table(
       class = 'display',
       thead(
