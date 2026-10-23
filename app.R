@@ -254,7 +254,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA COM PALETA DE ALTO CONTRASTE ---
+  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA (COM TETO DO EIXO Y EM NO MÁXIMO 100%) ---
   output$grafico_historico <- renderPlot({
     df_todos <- dados_reativos()
     
@@ -336,19 +336,6 @@ server <- function(input, output, session) {
     locais_ordenados <- c("PARANÁ (Total Estadual)", setdiff(locais_unicos, "PARANÁ (Total Estadual)"))
     df_plot$local <- factor(df_plot$local, levels = locais_ordenados)
     
-    # Paleta de Alto Contraste (Cores Vivas e Escuras)
-    paleta_vibrante <- c(
-      "PARANÁ (Total Estadual)" = "#0F172A", # Azul Marinho Quase Preto
-      "#DC2626", # Vermelho Intenso
-      "#2563EB", # Azul Royal
-      "#059669", # Verde Esmeralda
-      "#D97706", # Âmbar / Laranja Escuro
-      "#7C3AED", # Roxo Vibrante
-      "#0891B2", # Ciano Marinho Escuro
-      "#DB2777"  # Magenta Escuro
-    )
-    
-    # Atribui cores suficientes aos níveis
     cores_finais <- setNames(
       c("#0F172A", rep(c("#DC2626", "#2563EB", "#059669", "#D97706", "#7C3AED", "#0891B2", "#DB2777"), length.out = length(locais_ordenados) - 1)),
       locais_ordenados
@@ -357,15 +344,18 @@ server <- function(input, output, session) {
     max_y <- max(df_plot$valor_final, na.rm = TRUE)
     if (is.na(max_y) || max_y == 0) max_y <- 1
     
-    # 3. Renderização com Cores de Alto Contraste e Texto em Negrito
+    # 3. Renderização com Teto Limitado Rigorosamente a 100% (1.0)
     if (input$tipo_valor == "percentual") {
+      lim_y <- min(1.0, max_y * 1.15) # Teto máximo travado em 1.0 (100%)
+      
       ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
         geom_line(linewidth = 1.3) +
         geom_point(size = 3.5) +
         geom_text(aes(label = percent(valor_final, accuracy = 0.1)), vjust = -1.2, size = 4, fontface = "bold", show.legend = FALSE) +
         scale_color_manual(values = cores_finais) +
-        scale_y_continuous(labels = percent_format(), limits = c(0, max_y * 1.25)) +
+        scale_y_continuous(labels = percent_format(), limits = c(0, lim_y)) +
         scale_x_continuous(breaks = unique(df_plot$ano)) +
+        coord_cartesian(clip = "off") + # Garante que rótulos não sejam cortados
         theme_minimal(base_size = 14) +
         labs(
           x = "Ano", 
@@ -376,7 +366,8 @@ server <- function(input, output, session) {
           legend.position = "top",
           panel.grid.minor.x = element_blank(),
           legend.title = element_text(face = "bold"),
-          legend.text = element_text(size = 11, face = "bold")
+          legend.text = element_text(size = 11, face = "bold"),
+          plot.margin = margin(t = 20, r = 20, b = 10, l = 10)
         )
     } else {
       ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
@@ -386,6 +377,7 @@ server <- function(input, output, session) {
         scale_color_manual(values = cores_finais) +
         scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ","), limits = c(0, max_y * 1.25)) +
         scale_x_continuous(breaks = unique(df_plot$ano)) +
+        coord_cartesian(clip = "off") +
         theme_minimal(base_size = 14) +
         labs(
           x = "Ano", 
@@ -396,7 +388,8 @@ server <- function(input, output, session) {
           legend.position = "top",
           panel.grid.minor.x = element_blank(),
           legend.title = element_text(face = "bold"),
-          legend.text = element_text(size = 11, face = "bold")
+          legend.text = element_text(size = 11, face = "bold"),
+          plot.margin = margin(t = 20, r = 20, b = 10, l = 10)
         )
     }
   })
