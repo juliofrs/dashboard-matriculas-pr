@@ -10,8 +10,9 @@ library(scales)
 library(leaflet)
 library(sf)
 library(geobr)
+library(haven)
 
-# 1. Carregando os Dados do Novo Excel
+# 1. Carregando os Dados do Novo Excel e Cruzando com o NRE (.dta)
 caminho_arquivo <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
 
 # Lê a base principal
@@ -26,8 +27,17 @@ dados_matriculas <- dados_matriculas |>
   left_join(dados_populacao |> select(codigo_ibge, populacao_2024), 
             by = c("codigo_municipio" = "codigo_ibge"))
 
+# ETAPA 1: Lê o arquivo Stata com os NREs e faz o cruzamento por código de município
+dados_nre <- haven::read_dta("Municípios_NRE.dta") |>
+  select(co_municipio, cod_nre = COD_NRE, nome_nre = NOME_NRE) |>
+  mutate(co_municipio = as.numeric(co_municipio))
+
+dados_matriculas <- dados_matriculas |>
+  left_join(dados_nre, by = c("codigo_municipio" = "co_municipio"))
+
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 lista_municipios <- sort(unique(dados_matriculas$municipio))
+lista_nre <- sort(unique(na.omit(dados_matriculas$nome_nre)))
 
 # 2. Carregando o Mapa Geográfico do Paraná e convertendo para EPSG:4326
 mapa_pr <- read_municipality(code_muni = "PR", year = 2020, showProgress = FALSE) |>
@@ -47,6 +57,14 @@ ui <- page_navbar(
       label = "Escolha o Ano (exceto Histórico):", 
       choices = lista_anos,
       selected = max(lista_anos)
+    ),
+    
+    # ETAPA 2: Filtro por NRE na barra lateral
+    selectInput(
+      inputId = "nre_selecionado",
+      label = "Filtrar por NRE:",
+      choices = c("Todos os NREs" = "todos", lista_nre),
+      selected = "todos"
     ),
     
     selectizeInput(
@@ -122,7 +140,7 @@ ui <- page_navbar(
     title = "Ranking de Municípios",
     card(
       full_screen = TRUE,
-      card_header("Top 15 Municípios com Maiores Matrículas no Ano Selecionado"),
+      card_header("Ranking de Municípios com Maiores Matrículas"),
       plotOutput("grafico_ranking", height = "550px")
     )
   ),
@@ -132,7 +150,7 @@ ui <- page_navbar(
     title = "Evolução Histórica",
     card(
       full_screen = TRUE,
-      card_header("Comparativo Histórico de 2016 a 2025 (Estado x Municípios)"),
+      card_header("Comparativo Histórico de 2016 a 2025 (Estado x Regional x Municípios)"),
       plotOutput("grafico_historico", height = "550px")
     )
   ),
@@ -160,7 +178,17 @@ ui <- page_navbar(
 # 4. Lógica do Servidor
 server <- function(input, output, session) {
   
-  # --- Lógica Inteligente para os Filtros ---
+  # Atualiza a lista de municípios no histórico de acordo com o NRE selecionado
+  observeEvent(input$nre_selecionado, {
+    if (input$nre_selecionado == "todos") {
+      updateSelectizeInput(session, "municipios_historico", choices = lista_municipios, server = TRUE)
+    } else {
+      munis_filtrados <- sort(unique(dados_matriculas$municipio[dados_matriculas$nome_nre == input$nre_selecionado]))
+      updateSelectizeInput(session, "municipios_historico", choices = munis_filtrados, server = TRUE)
+    }
+  }, ignoreInit = TRUE)
+  
+  # Lógica de exclusão mútua entre Etapa de Ensino e Faixa Etária
   observeEvent(input$etapa_ensino, {
     if (input$etapa_ensino != "geral") {
       updateSelectInput(session, "faixa_etaria", selected = "geral")
@@ -200,8 +228,14 @@ server <- function(input, output, session) {
   # --- GRÁFICO 1: RANKING DE MUNICÍPIOS ---
   output$grafico_ranking <- renderPlot({
     dados_ano <- dados_reativos() |> 
-      filter(ano == input$ano_selecionado) |>
-      select(codigo_municipio, municipio, rede, valor_etapa)
+      filter(ano == input$ano_selecionado)
+    
+    # Aplica o filtro de NRE se selecionado
+    if (input$nre_selecionado != "todos") {
+      dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
+    }
+    
+    dados_ano <- dados_ano |> select(codigo_municipio, municipio, rede, valor_etapa)
     
     tabela_larga <- dados_ano |>
       pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
@@ -230,8 +264,13 @@ server <- function(input, output, session) {
       as.numeric(tabela_larga$valor_base)
     }
     
-    metricas <- tabela_larga |> select(municipio, valor_final) |> arrange(desc(valor_final)) |> head(15)
+    qtd_linhas <- ifelse(input$nre_selecionado == "todos", 15, 20)
+    metricas <- tabela_larga |> select(municipio, valor_final) |> arrange(desc(valor_final)) |> head(qtd_linhas)
     metricas$municipio <- factor(metricas$municipio, levels = rev(metricas$municipio))
+    
+    titulo_eixo <- ifelse(input$tipo_valor == "percentual",
+                          paste("Proporção de", tools::toTitleCase(input$rede_selecionada)),
+                          paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")"))
     
     if (input$tipo_valor == "percentual") {
       ggplot(metricas, aes(x = municipio, y = valor_final, fill = valor_final)) +
@@ -240,7 +279,7 @@ server <- function(input, output, session) {
         scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
         scale_fill_gradient(low = "#fdba74", high = "#c2410c") +
         theme_minimal(base_size = 14) +
-        labs(x = "", y = paste("Proporção de", tools::toTitleCase(input$rede_selecionada))) +
+        labs(x = "", y = titulo_eixo) +
         theme(panel.grid.major.y = element_blank())
     } else {
       ggplot(metricas, aes(x = municipio, y = valor_final, fill = valor_final)) +
@@ -249,12 +288,12 @@ server <- function(input, output, session) {
         scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ",")) +
         scale_fill_gradient(low = "#fed7aa", high = "#9a3412") +
         theme_minimal(base_size = 14) +
-        labs(x = "", y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")")) +
+        labs(x = "", y = titulo_eixo) +
         theme(panel.grid.major.y = element_blank())
     }
   })
   
-  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA (COM TETO DO EIXO Y EM NO MÁXIMO 100%) ---
+  # --- GRÁFICO 2: EVOLUÇÃO HISTÓRICA MULTI-LINHAS ---
   output$grafico_historico <- renderPlot({
     df_todos <- dados_reativos()
     
@@ -292,7 +331,46 @@ server <- function(input, output, session) {
       mutate(local = "PARANÁ (Total Estadual)") |>
       select(ano, local, valor_final)
     
-    # 2. Agregação dos Municípios Selecionados
+    # 2. Agregação do NRE selecionado (se houver)
+    if (input$nre_selecionado != "todos") {
+      resumo_nre <- df_todos |>
+        filter(nome_nre == input$nre_selecionado) |>
+        group_by(ano, rede) |>
+        summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
+        pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
+        clean_names()
+      
+      if(!"federal" %in% names(resumo_nre)) resumo_nre$federal <- 0
+      if(!"municipal" %in% names(resumo_nre)) resumo_nre$municipal <- 0
+      if(!"estadual" %in% names(resumo_nre)) resumo_nre$estadual <- 0
+      if(!"privada" %in% names(resumo_nre)) resumo_nre$privada <- 0
+      
+      resumo_nre <- resumo_nre |>
+        mutate(publico = estadual + municipal + federal, total = publico + privada)
+      
+      resumo_nre$valor_base <- case_when(
+        input$rede_selecionada == "publico" ~ resumo_nre$publico,
+        input$rede_selecionada == "estadual" ~ resumo_nre$estadual,
+        input$rede_selecionada == "municipal" ~ resumo_nre$municipal,
+        input$rede_selecionada == "federal" ~ resumo_nre$federal,
+        input$rede_selecionada == "privada" ~ resumo_nre$privada,
+        TRUE ~ resumo_nre$total
+      )
+      
+      resumo_nre$valor_final <- if (input$tipo_valor == "percentual" && input$rede_selecionada != "total") {
+        ifelse(resumo_nre$total == 0, 0, resumo_nre$valor_base / resumo_nre$total)
+      } else {
+        as.numeric(resumo_nre$valor_base)
+      }
+      
+      df_nre_plot <- resumo_nre |>
+        mutate(local = paste0("NRE ", input$nre_selecionado, " (Total Regional)")) |>
+        select(ano, local, valor_final)
+      
+      df_plot <- bind_rows(df_plot, df_nre_plot)
+    }
+    
+    # 3. Agregação dos Municípios Selecionados
     if (!is.null(input$municipios_historico) && length(input$municipios_historico) > 0) {
       df_muni <- df_todos |>
         filter(municipio %in% input$municipios_historico) |>
@@ -331,22 +409,20 @@ server <- function(input, output, session) {
       df_plot <- bind_rows(df_plot, df_muni_plot)
     }
     
-    # Ordenação dos fatores
+    # Ordenação dos fatores garantindo referências no início
     locais_unicos <- unique(df_plot$local)
-    locais_ordenados <- c("PARANÁ (Total Estadual)", setdiff(locais_unicos, "PARANÁ (Total Estadual)"))
+    ordem_referencias <- c("PARANÁ (Total Estadual)", grep("^NRE ", locais_unicos, value = TRUE))
+    locais_ordenados <- c(ordem_referencias, setdiff(locais_unicos, ordem_referencias))
     df_plot$local <- factor(df_plot$local, levels = locais_ordenados)
     
-    cores_finais <- setNames(
-      c("#0F172A", rep(c("#DC2626", "#2563EB", "#059669", "#D97706", "#7C3AED", "#0891B2", "#DB2777"), length.out = length(locais_ordenados) - 1)),
-      locais_ordenados
-    )
+    cores_base <- c("#0F172A", "#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#0891B2", "#DB2777")
+    cores_finais <- setNames(rep(cores_base, length.out = length(locais_ordenados)), locais_ordenados)
     
     max_y <- max(df_plot$valor_final, na.rm = TRUE)
     if (is.na(max_y) || max_y == 0) max_y <- 1
     
-    # 3. Renderização com Teto Limitado Rigorosamente a 100% (1.0)
     if (input$tipo_valor == "percentual") {
-      lim_y <- min(1.0, max_y * 1.15) # Teto máximo travado em 1.0 (100%)
+      lim_y <- min(1.0, max_y * 1.15)
       
       ggplot(df_plot, aes(x = ano, y = valor_final, color = local, group = local)) +
         geom_line(linewidth = 1.3) +
@@ -355,7 +431,7 @@ server <- function(input, output, session) {
         scale_color_manual(values = cores_finais) +
         scale_y_continuous(labels = percent_format(), limits = c(0, lim_y)) +
         scale_x_continuous(breaks = unique(df_plot$ano)) +
-        coord_cartesian(clip = "off") + # Garante que rótulos não sejam cortados
+        coord_cartesian(clip = "off") +
         theme_minimal(base_size = 14) +
         labs(
           x = "Ano", 
@@ -396,8 +472,18 @@ server <- function(input, output, session) {
   
   # --- MAPA INTERATIVO ---
   output$mapa_interativo <- renderLeaflet({
-    dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |> select(codigo_municipio, municipio, rede, valor_etapa)
-    tabela_larga_mapa <- dados_ano |> pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> clean_names()
+    dados_ano <- dados_reativos() |> 
+      filter(ano == input$ano_selecionado)
+    
+    if (input$nre_selecionado != "todos") {
+      dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
+    }
+    
+    dados_ano <- dados_ano |> select(codigo_municipio, municipio, rede, valor_etapa)
+    
+    tabela_larga_mapa <- dados_ano |> 
+      pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> 
+      clean_names()
     
     if(!"federal" %in% names(tabela_larga_mapa)) tabela_larga_mapa$federal <- 0
     if(!"municipal" %in% names(tabela_larga_mapa)) tabela_larga_mapa$municipal <- 0
@@ -422,8 +508,14 @@ server <- function(input, output, session) {
     }
     
     metricas <- tabela_larga_mapa |> select(codigo_municipio, municipio, valor_final)
-    mapa_pr_dados <- mapa_pr |> left_join(metricas, by = c("code_muni" = "codigo_municipio"))
-    mapa_pr_dados$valor_final[is.na(mapa_pr_dados$valor_final)] <- 0
+    
+    # Se filtrou NRE, foca nos municípios correspondentes
+    if (input$nre_selecionado != "todos") {
+      mapa_pr_dados <- mapa_pr |> inner_join(metricas, by = c("code_muni" = "codigo_municipio"))
+    } else {
+      mapa_pr_dados <- mapa_pr |> left_join(metricas, by = c("code_muni" = "codigo_municipio"))
+      mapa_pr_dados$valor_final[is.na(mapa_pr_dados$valor_final)] <- 0
+    }
     
     if (input$tipo_valor == "percentual") {
       pal <- colorNumeric("YlOrRd", domain = c(0, 1), na.color = "transparent")
@@ -456,9 +548,16 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABELA DETALHADA ---
+  # --- TABELA DETALHADA COM CABEÇALHO DINÂMICO (ESTADO OU NRE) ---
   output$tabela_dinamica <- renderDT({
-    dados_ano <- dados_reativos() |> filter(ano == input$ano_selecionado) |> select(municipio, rede, valor_etapa, populacao_2024)
+    dados_ano <- dados_reativos() |> 
+      filter(ano == input$ano_selecionado)
+    
+    if (input$nre_selecionado != "todos") {
+      dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
+    }
+    
+    dados_ano <- dados_ano |> select(municipio, rede, valor_etapa, populacao_2024)
     tabela_larga <- dados_ano |> pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |> clean_names() 
     
     if(!"federal" %in% names(tabela_larga)) tabela_larga$federal <- 0
@@ -471,7 +570,7 @@ server <- function(input, output, session) {
       select(municipio, estadual, municipal, federal, publico, privada, total, populacao_2024) |>
       arrange(desc(total))
     
-    # 1. Totais Consolidados do Estado
+    # Totais consolidados (do estado todo ou do NRE selecionado)
     val_est <- sum(tabela_municipios$estadual, na.rm = TRUE)
     val_mun <- sum(tabela_municipios$municipal, na.rm = TRUE)
     val_fed <- sum(tabela_municipios$federal, na.rm = TRUE)
@@ -480,7 +579,12 @@ server <- function(input, output, session) {
     val_tot <- sum(tabela_municipios$total, na.rm = TRUE)
     val_pop <- sum(tabela_municipios$populacao_2024, na.rm = TRUE)
     
-    # 2. Formatação explícita com alinhamento
+    nome_linha_fixa <- if (input$nre_selecionado == "todos") {
+      "PARANÁ (Total Estadual)"
+    } else {
+      paste0("NRE ", input$nre_selecionado, " (Total Regional)")
+    }
+    
     if (input$tipo_valor == "percentual") {
       p_est <- ifelse(val_tot == 0, "0,0%", percent(val_est / val_tot, accuracy = 0.1, decimal.mark = ","))
       p_mun <- ifelse(val_tot == 0, "0,0%", percent(val_mun / val_tot, accuracy = 0.1, decimal.mark = ","))
@@ -507,7 +611,7 @@ server <- function(input, output, session) {
       p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
-    # 3. Cabeçalho fixo (sketch)
+    # Cabeçalho fixo com alinhamento perfeito à direita
     sketch <- htmltools::withTags(table(
       class = 'display',
       thead(
@@ -523,7 +627,7 @@ server <- function(input, output, session) {
         ),
         tr(
           style = "background-color: #e2e8f0; font-weight: bold; color: #0f172a; font-size: 14px;",
-          th(style = "text-align: left; padding: 8px 10px;", "PARANÁ (Total Estadual)"),
+          th(style = "text-align: left; padding: 8px 10px;", nome_linha_fixa),
           th(style = "text-align: right; padding: 8px 10px;", p_est),
           th(style = "text-align: right; padding: 8px 10px;", p_mun),
           th(style = "text-align: right; padding: 8px 10px;", p_fed),

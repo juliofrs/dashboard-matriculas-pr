@@ -1,0 +1,10 @@
+name: dashboard-matriculas-pr
+title: dashboard-matriculas-pr
+username: educacaoprdashboard
+account: educacaoprdashboard
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18216015
+bundleId: 12716496
+url: https://educacaoprdashboard.shinyapps.io/dashboard-matriculas-pr/
+version: 1
