@@ -10,12 +10,11 @@ library(scales)
 library(leaflet)
 library(sf)
 library(geobr)
-library(haven)
 
-# 1. Carregando os Dados do Novo Excel e Cruzando com o NRE (.dta)
+# 1. Carregando os Dados do Excel (com os NREs já integrados)
 caminho_arquivo <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
 
-# Lê a base principal
+# Lê a base principal com colunas limpas (incluindo cod_nre e nome_nre)
 dados_matriculas <- read_excel(caminho_arquivo, sheet = "Plan1") |> clean_names()
 dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
 
@@ -26,14 +25,6 @@ dados_populacao$codigo_ibge <- as.numeric(dados_populacao$codigo_ibge)
 dados_matriculas <- dados_matriculas |>
   left_join(dados_populacao |> select(codigo_ibge, populacao_2024), 
             by = c("codigo_municipio" = "codigo_ibge"))
-
-# ETAPA 1: Lê o arquivo Stata com os NREs e faz o cruzamento por código de município
-dados_nre <- haven::read_dta("Municípios_NRE.dta") |>
-  select(co_municipio, cod_nre = COD_NRE, nome_nre = NOME_NRE) |>
-  mutate(co_municipio = as.numeric(co_municipio))
-
-dados_matriculas <- dados_matriculas |>
-  left_join(dados_nre, by = c("codigo_municipio" = "co_municipio"))
 
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 lista_municipios <- sort(unique(dados_matriculas$municipio))
@@ -59,7 +50,6 @@ ui <- page_navbar(
       selected = max(lista_anos)
     ),
     
-    # ETAPA 2: Filtro por NRE na barra lateral
     selectInput(
       inputId = "nre_selecionado",
       label = "Filtrar por NRE:",
@@ -178,7 +168,7 @@ ui <- page_navbar(
 # 4. Lógica do Servidor
 server <- function(input, output, session) {
   
-  # Atualiza a lista de municípios no histórico de acordo com o NRE selecionado
+  # Sincroniza o seletor de municípios com o NRE selecionado
   observeEvent(input$nre_selecionado, {
     if (input$nre_selecionado == "todos") {
       updateSelectizeInput(session, "municipios_historico", choices = lista_municipios, server = TRUE)
@@ -188,7 +178,7 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  # Lógica de exclusão mútua entre Etapa de Ensino e Faixa Etária
+  # Exclusão mútua entre Etapa de Ensino e Faixa Etária
   observeEvent(input$etapa_ensino, {
     if (input$etapa_ensino != "geral") {
       updateSelectInput(session, "faixa_etaria", selected = "geral")
@@ -201,7 +191,7 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  # --- Preparação Dinâmica dos Dados ---
+  # Preparação Reativa dos Dados
   dados_reativos <- reactive({
     df <- dados_matriculas
     coluna_alvo <- "total_educacao_basica"
@@ -230,7 +220,6 @@ server <- function(input, output, session) {
     dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado)
     
-    # Aplica o filtro de NRE se selecionado
     if (input$nre_selecionado != "todos") {
       dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
     }
@@ -297,7 +286,7 @@ server <- function(input, output, session) {
   output$grafico_historico <- renderPlot({
     df_todos <- dados_reativos()
     
-    # 1. Agregação Estadual (PARANÁ)
+    # 1. Agregação Estadual
     resumo_estado <- df_todos |>
       group_by(ano, rede) |>
       summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -331,7 +320,7 @@ server <- function(input, output, session) {
       mutate(local = "PARANÁ (Total Estadual)") |>
       select(ano, local, valor_final)
     
-    # 2. Agregação do NRE selecionado (se houver)
+    # 2. Agregação Regional (se houver NRE selecionado)
     if (input$nre_selecionado != "todos") {
       resumo_nre <- df_todos |>
         filter(nome_nre == input$nre_selecionado) |>
@@ -409,7 +398,6 @@ server <- function(input, output, session) {
       df_plot <- bind_rows(df_plot, df_muni_plot)
     }
     
-    # Ordenação dos fatores garantindo referências no início
     locais_unicos <- unique(df_plot$local)
     ordem_referencias <- c("PARANÁ (Total Estadual)", grep("^NRE ", locais_unicos, value = TRUE))
     locais_ordenados <- c(ordem_referencias, setdiff(locais_unicos, ordem_referencias))
@@ -509,7 +497,6 @@ server <- function(input, output, session) {
     
     metricas <- tabela_larga_mapa |> select(codigo_municipio, municipio, valor_final)
     
-    # Se filtrou NRE, foca nos municípios correspondentes
     if (input$nre_selecionado != "todos") {
       mapa_pr_dados <- mapa_pr |> inner_join(metricas, by = c("code_muni" = "codigo_municipio"))
     } else {
@@ -548,7 +535,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABELA DETALHADA COM CABEÇALHO DINÂMICO (ESTADO OU NRE) ---
+  # --- TABELA DETALHADA COM CABEÇALHO DINÂMICO ---
   output$tabela_dinamica <- renderDT({
     dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado)
@@ -570,7 +557,6 @@ server <- function(input, output, session) {
       select(municipio, estadual, municipal, federal, publico, privada, total, populacao_2024) |>
       arrange(desc(total))
     
-    # Totais consolidados (do estado todo ou do NRE selecionado)
     val_est <- sum(tabela_municipios$estadual, na.rm = TRUE)
     val_mun <- sum(tabela_municipios$municipal, na.rm = TRUE)
     val_fed <- sum(tabela_municipios$federal, na.rm = TRUE)
@@ -611,7 +597,6 @@ server <- function(input, output, session) {
       p_pop <- comma(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
-    # Cabeçalho fixo com alinhamento perfeito à direita
     sketch <- htmltools::withTags(table(
       class = 'display',
       thead(
