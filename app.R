@@ -11,10 +11,10 @@ library(leaflet)
 library(sf)
 library(geobr)
 
-# 1. Carregando os Dados do Excel (com os NREs já integrados)
+# 1. Carregando os Dados do Excel
 caminho_arquivo <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
 
-# Lê a base principal com colunas limpas (incluindo cod_nre e nome_nre)
+# Lê a base principal com colunas limpas (incluindo regiao_ppa, cod_nre e nome_nre)
 dados_matriculas <- read_excel(caminho_arquivo, sheet = "Plan1") |> clean_names()
 dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
 
@@ -29,13 +29,14 @@ dados_matriculas <- dados_matriculas |>
 lista_anos <- sort(unique(dados_matriculas$ano), decreasing = TRUE) 
 lista_municipios <- sort(unique(dados_matriculas$municipio))
 lista_nre <- sort(unique(na.omit(dados_matriculas$nome_nre)))
+lista_ppa <- sort(unique(na.omit(dados_matriculas$regiao_ppa)))
 
 # 2. Carregando o Mapa Geográfico do Paraná e convertendo para EPSG:4326
 mapa_pr <- read_municipality(code_muni = "PR", year = 2020, showProgress = FALSE) |>
   st_transform(4326)
 mapa_pr$code_muni <- as.numeric(mapa_pr$code_muni)
 
-# 3. Interface (UI) com 4 Abas
+# 3. Interface (UI)
 ui <- page_navbar(
   title = "Dashboard Educacional - Paraná",
   theme = bs_theme(preset = "flatly"),
@@ -48,6 +49,14 @@ ui <- page_navbar(
       label = "Escolha o Ano (exceto Histórico):", 
       choices = lista_anos,
       selected = max(lista_anos)
+    ),
+    
+    # Novo Seletor: Região do PPA
+    selectInput(
+      inputId = "regiao_ppa",
+      label = "Região do PPA:",
+      choices = c("Todas as Regiões" = "todas", lista_ppa),
+      selected = "todas"
     ),
     
     selectInput(
@@ -122,7 +131,7 @@ ui <- page_navbar(
       selected = "absoluto"
     ),
     
-    p(class = "text-muted", "Dica: Ao selecionar um recorte (Etapa ou Idade), o outro será resetado automaticamente para evitar conflitos.")
+    p(class = "text-muted", "Dica: Recortes por Etapa e Faixa Etária alternam-se automaticamente.")
   ),
   
   # --- ABA 1: RANKING ---
@@ -140,7 +149,7 @@ ui <- page_navbar(
     title = "Evolução Histórica",
     card(
       full_screen = TRUE,
-      card_header("Comparativo Histórico de 2016 a 2025 (Estado x Regional x Municípios)"),
+      card_header("Comparativo Histórico de 2016 a 2025 (Estado x PPA x Regional x Municípios)"),
       plotOutput("grafico_historico", height = "550px")
     )
   ),
@@ -168,14 +177,38 @@ ui <- page_navbar(
 # 4. Lógica do Servidor
 server <- function(input, output, session) {
   
-  # Sincroniza o seletor de municípios com o NRE selecionado
-  observeEvent(input$nre_selecionado, {
-    if (input$nre_selecionado == "todos") {
-      updateSelectizeInput(session, "municipios_historico", choices = lista_municipios, server = TRUE)
+  # Cascata 1: Ao mudar a Região do PPA, atualiza as opções de NRE
+  observeEvent(input$regiao_ppa, {
+    if (input$regiao_ppa == "todas") {
+      nres_disponiveis <- lista_nre
     } else {
-      munis_filtrados <- sort(unique(dados_matriculas$municipio[dados_matriculas$nome_nre == input$nre_selecionado]))
-      updateSelectizeInput(session, "municipios_historico", choices = munis_filtrados, server = TRUE)
+      nres_disponiveis <- sort(unique(na.omit(dados_matriculas$nome_nre[dados_matriculas$regiao_ppa == input$regiao_ppa])))
     }
+    
+    sel_atual <- if (input$nre_selecionado %in% nres_disponiveis) input$nre_selecionado else "todos"
+    updateSelectInput(session, "nre_selecionado", 
+                      choices = c("Todos os NREs" = "todos", nres_disponiveis), 
+                      selected = sel_atual)
+  }, ignoreInit = TRUE)
+  
+  # Cascata 2: Atualiza a lista de municípios para o Histórico conforme PPA e NRE selecionados
+  observeEvent(list(input$regiao_ppa, input$nre_selecionado), {
+    df_muni_filt <- dados_matriculas
+    
+    if (input$regiao_ppa != "todas") {
+      df_muni_filt <- df_muni_filt |> filter(regiao_ppa == input$regiao_ppa)
+    }
+    if (input$nre_selecionado != "todos") {
+      df_muni_filt <- df_muni_filt |> filter(nome_nre == input$nre_selecionado)
+    }
+    
+    munis_disp <- sort(unique(df_muni_filt$municipio))
+    sel_existente <- intersect(input$municipios_historico, munis_disp)
+    
+    updateSelectizeInput(session, "municipios_historico", 
+                         choices = munis_disp, 
+                         selected = sel_existente, 
+                         server = TRUE)
   }, ignoreInit = TRUE)
   
   # Exclusão mútua entre Etapa de Ensino e Faixa Etária
@@ -220,6 +253,9 @@ server <- function(input, output, session) {
     dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado)
     
+    if (input$regiao_ppa != "todas") {
+      dados_ano <- dados_ano |> filter(regiao_ppa == input$regiao_ppa)
+    }
     if (input$nre_selecionado != "todos") {
       dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
     }
@@ -253,7 +289,7 @@ server <- function(input, output, session) {
       as.numeric(tabela_larga$valor_base)
     }
     
-    qtd_linhas <- ifelse(input$nre_selecionado == "todos", 15, 20)
+    qtd_linhas <- ifelse(input$regiao_ppa == "todas" && input$nre_selecionado == "todos", 15, 20)
     metricas <- tabela_larga |> select(municipio, valor_final) |> arrange(desc(valor_final)) |> head(qtd_linhas)
     metricas$municipio <- factor(metricas$municipio, levels = rev(metricas$municipio))
     
@@ -286,7 +322,7 @@ server <- function(input, output, session) {
   output$grafico_historico <- renderPlot({
     df_todos <- dados_reativos()
     
-    # 1. Agregação Estadual
+    # 1. Agregação Estadual (Sempre presente)
     resumo_estado <- df_todos |>
       group_by(ano, rede) |>
       summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -298,8 +334,7 @@ server <- function(input, output, session) {
     if(!"estadual" %in% names(resumo_estado)) resumo_estado$estadual <- 0
     if(!"privada" %in% names(resumo_estado)) resumo_estado$privada <- 0
     
-    resumo_estado <- resumo_estado |>
-      mutate(publico = estadual + municipal + federal, total = publico + privada)
+    resumo_estado <- resumo_estado |> mutate(publico = estadual + municipal + federal, total = publico + privada)
     
     resumo_estado$valor_base <- case_when(
       input$rede_selecionada == "publico" ~ resumo_estado$publico,
@@ -320,7 +355,45 @@ server <- function(input, output, session) {
       mutate(local = "PARANÁ (Total Estadual)") |>
       select(ano, local, valor_final)
     
-    # 2. Agregação Regional (se houver NRE selecionado)
+    # 2. Agregação Região PPA (se selecionada)
+    if (input$regiao_ppa != "todas") {
+      resumo_ppa <- df_todos |>
+        filter(regiao_ppa == input$regiao_ppa) |>
+        group_by(ano, rede) |>
+        summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
+        pivot_wider(names_from = rede, values_from = valor_etapa, values_fill = 0) |>
+        clean_names()
+      
+      if(!"federal" %in% names(resumo_ppa)) resumo_ppa$federal <- 0
+      if(!"municipal" %in% names(resumo_ppa)) resumo_ppa$municipal <- 0
+      if(!"estadual" %in% names(resumo_ppa)) resumo_ppa$estadual <- 0
+      if(!"privada" %in% names(resumo_ppa)) resumo_ppa$privada <- 0
+      
+      resumo_ppa <- resumo_ppa |> mutate(publico = estadual + municipal + federal, total = publico + privada)
+      
+      resumo_ppa$valor_base <- case_when(
+        input$rede_selecionada == "publico" ~ resumo_ppa$publico,
+        input$rede_selecionada == "estadual" ~ resumo_ppa$estadual,
+        input$rede_selecionada == "municipal" ~ resumo_ppa$municipal,
+        input$rede_selecionada == "federal" ~ resumo_ppa$federal,
+        input$rede_selecionada == "privada" ~ resumo_ppa$privada,
+        TRUE ~ resumo_ppa$total
+      )
+      
+      resumo_ppa$valor_final <- if (input$tipo_valor == "percentual" && input$rede_selecionada != "total") {
+        ifelse(resumo_ppa$total == 0, 0, resumo_ppa$valor_base / resumo_ppa$total)
+      } else {
+        as.numeric(resumo_ppa$valor_base)
+      }
+      
+      df_ppa_plot <- resumo_ppa |>
+        mutate(local = paste0("Região PPA ", input$regiao_ppa)) |>
+        select(ano, local, valor_final)
+      
+      df_plot <- bind_rows(df_plot, df_ppa_plot)
+    }
+    
+    # 3. Agregação NRE Regional (se selecionado)
     if (input$nre_selecionado != "todos") {
       resumo_nre <- df_todos |>
         filter(nome_nre == input$nre_selecionado) |>
@@ -334,8 +407,7 @@ server <- function(input, output, session) {
       if(!"estadual" %in% names(resumo_nre)) resumo_nre$estadual <- 0
       if(!"privada" %in% names(resumo_nre)) resumo_nre$privada <- 0
       
-      resumo_nre <- resumo_nre |>
-        mutate(publico = estadual + municipal + federal, total = publico + privada)
+      resumo_nre <- resumo_nre |> mutate(publico = estadual + municipal + federal, total = publico + privada)
       
       resumo_nre$valor_base <- case_when(
         input$rede_selecionada == "publico" ~ resumo_nre$publico,
@@ -353,13 +425,13 @@ server <- function(input, output, session) {
       }
       
       df_nre_plot <- resumo_nre |>
-        mutate(local = paste0("NRE ", input$nre_selecionado, " (Total Regional)")) |>
+        mutate(local = paste0("NRE ", input$nre_selecionado)) |>
         select(ano, local, valor_final)
       
       df_plot <- bind_rows(df_plot, df_nre_plot)
     }
     
-    # 3. Agregação dos Municípios Selecionados
+    # 4. Agregação dos Municípios Selecionados
     if (!is.null(input$municipios_historico) && length(input$municipios_historico) > 0) {
       df_muni <- df_todos |>
         filter(municipio %in% input$municipios_historico) |>
@@ -373,8 +445,7 @@ server <- function(input, output, session) {
       if(!"estadual" %in% names(df_muni)) df_muni$estadual <- 0
       if(!"privada" %in% names(df_muni)) df_muni$privada <- 0
       
-      df_muni <- df_muni |>
-        mutate(publico = estadual + municipal + federal, total = publico + privada)
+      df_muni <- df_muni |> mutate(publico = estadual + municipal + federal, total = publico + privada)
       
       df_muni$valor_base <- case_when(
         input$rede_selecionada == "publico" ~ df_muni$publico,
@@ -399,11 +470,11 @@ server <- function(input, output, session) {
     }
     
     locais_unicos <- unique(df_plot$local)
-    ordem_referencias <- c("PARANÁ (Total Estadual)", grep("^NRE ", locais_unicos, value = TRUE))
+    ordem_referencias <- c("PARANÁ (Total Estadual)", grep("^Região PPA", locais_unicos, value = TRUE), grep("^NRE ", locais_unicos, value = TRUE))
     locais_ordenados <- c(ordem_referencias, setdiff(locais_unicos, ordem_referencias))
     df_plot$local <- factor(df_plot$local, levels = locais_ordenados)
     
-    cores_base <- c("#0F172A", "#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#0891B2", "#DB2777")
+    cores_base <- c("#0F172A", "#0D9488", "#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#DB2777")
     cores_finais <- setNames(rep(cores_base, length.out = length(locais_ordenados)), locais_ordenados)
     
     max_y <- max(df_plot$valor_final, na.rm = TRUE)
@@ -424,7 +495,7 @@ server <- function(input, output, session) {
         labs(
           x = "Ano", 
           y = paste("Proporção (", tools::toTitleCase(input$rede_selecionada), ")"),
-          color = "Localidade"
+          color = "Recorte"
         ) +
         theme(
           legend.position = "top",
@@ -446,7 +517,7 @@ server <- function(input, output, session) {
         labs(
           x = "Ano", 
           y = paste("Total de Matrículas (", tools::toTitleCase(input$rede_selecionada), ")"),
-          color = "Localidade"
+          color = "Recorte"
         ) +
         theme(
           legend.position = "top",
@@ -463,6 +534,9 @@ server <- function(input, output, session) {
     dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado)
     
+    if (input$regiao_ppa != "todas") {
+      dados_ano <- dados_ano |> filter(regiao_ppa == input$regiao_ppa)
+    }
     if (input$nre_selecionado != "todos") {
       dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
     }
@@ -497,7 +571,8 @@ server <- function(input, output, session) {
     
     metricas <- tabela_larga_mapa |> select(codigo_municipio, municipio, valor_final)
     
-    if (input$nre_selecionado != "todos") {
+    # Se houver recorte territorial ativo (PPA ou NRE), foca o mapa desenhando apenas os polígonos filtrados
+    if (input$regiao_ppa != "todas" || input$nre_selecionado != "todos") {
       mapa_pr_dados <- mapa_pr |> inner_join(metricas, by = c("code_muni" = "codigo_municipio"))
     } else {
       mapa_pr_dados <- mapa_pr |> left_join(metricas, by = c("code_muni" = "codigo_municipio"))
@@ -540,6 +615,9 @@ server <- function(input, output, session) {
     dados_ano <- dados_reativos() |> 
       filter(ano == input$ano_selecionado)
     
+    if (input$regiao_ppa != "todas") {
+      dados_ano <- dados_ano |> filter(regiao_ppa == input$regiao_ppa)
+    }
     if (input$nre_selecionado != "todos") {
       dados_ano <- dados_ano |> filter(nome_nre == input$nre_selecionado)
     }
@@ -565,10 +643,12 @@ server <- function(input, output, session) {
     val_tot <- sum(tabela_municipios$total, na.rm = TRUE)
     val_pop <- sum(tabela_municipios$populacao_2024, na.rm = TRUE)
     
-    nome_linha_fixa <- if (input$nre_selecionado == "todos") {
-      "PARANÁ (Total Estadual)"
-    } else {
+    nome_linha_fixa <- if (input$nre_selecionado != "todos") {
       paste0("NRE ", input$nre_selecionado, " (Total Regional)")
+    } else if (input$regiao_ppa != "todas") {
+      paste0("Região PPA ", input$regiao_ppa, " (Total Macrorregional)")
+    } else {
+      "PARANÁ (Total Estadual)"
     }
     
     if (input$tipo_valor == "percentual") {

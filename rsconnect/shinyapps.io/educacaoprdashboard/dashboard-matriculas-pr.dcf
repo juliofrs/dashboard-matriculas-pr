@@ -5,6 +5,6 @@ account: educacaoprdashboard
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 18216015
-bundleId: 12716496
+bundleId: 12755291
 url: https://educacaoprdashboard.shinyapps.io/dashboard-matriculas-pr/
 version: 1
