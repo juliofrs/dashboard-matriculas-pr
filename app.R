@@ -1,6 +1,6 @@
 # =============================================================================
 # PROJETO: PLATAFORMA DE INTELIGÊNCIA EDUCACIONAL DO PARANÁ
-# CÓDIGO PRINCIPAL: app.R
+# CÓDIGO PRINCIPAL: app.R (MATRÍCULAS 2016-2025 + FINANCIAMENTO FUNDEB 2024-2026)
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -23,12 +23,14 @@ suppressPackageStartupMessages({
 # Carregamento modular resiliente
 if (dir.exists("R")) {
   source("R/funcoes_calculo.R")
+  source("R/funcoes_fundeb.R")
   source("R/componentes_ui.R")
+  source("R/modulo_fundeb.R")
   source("R/modulo_ia.R")
 }
 
 # =============================================================================
-# 1. CARREGAMENTO E PREPARAÇÃO DOS DADOS
+# 1. CARREGAMENTO E PREPARAÇÃO DOS DADOS (EXECUÇÃO ÚNICA NO ARRANQUE)
 # =============================================================================
 caminho_base <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
 dados_matriculas <- read_excel(caminho_base, sheet = "Plan1") |> clean_names()
@@ -46,6 +48,13 @@ lista_municipios <- sort(unique(dados_matriculas$municipio))
 lista_nre        <- sort(unique(na.omit(dados_matriculas$nome_nre)))
 lista_ppa        <- sort(unique(na.omit(dados_matriculas$regiao_ppa)))
 
+# Carregamento e integração da base financeira FUNDEB (2024 a 2026)
+caminho_fundeb <- "Fundeb.xlsx"
+res_fundeb <- carregar_dados_fundeb(caminho_fundeb, dados_matriculas)
+dados_fundeb_mun    <- res_fundeb$municipios
+dados_fundeb_estado <- res_fundeb$estado
+lista_anos_fundeb   <- sort(unique(dados_fundeb_mun$ano), decreasing = TRUE)
+
 # Carregamento do mapa a partir da cache rápida ou geobr como fallback
 ficheiro_mapa_rds <- "mapa_pr_2020.rds"
 if (file.exists(ficheiro_mapa_rds)) {
@@ -60,7 +69,9 @@ if (file.exists(ficheiro_mapa_rds)) {
 # 2. INTERFACE DO UTILIZADOR (UI)
 # =============================================================================
 ui <- page_navbar(
+  id = "nav_principal",
   title = "Educação Básica em Dados | Paraná",
+  fillable = FALSE,
   theme = bs_theme(
     version = 5,
     preset = "flatly",
@@ -70,60 +81,80 @@ ui <- page_navbar(
   header = estilos_customizados(),
   
   sidebar = sidebar(
-    title = span(style = "font-weight: 700; font-size: 0.95rem;", "Filtros Analíticos"),
+    id = "sidebar_principal",
     width = 310,
-    
-    div(
-      actionButton("limpar_filtros", "↺ Restaurar Filtros Padrão", class = "btn btn-limpar-filtros mb-3")
+    title = tagList(
+      conditionalPanel(
+        condition = "input.nav_principal != 'Financiamento (FUNDEB)'",
+        span(style = "font-weight: 700; font-size: 0.95rem;", "Filtros de Matrículas")
+      ),
+      conditionalPanel(
+        condition = "input.nav_principal == 'Financiamento (FUNDEB)'",
+        span(style = "font-weight: 700; font-size: 0.95rem;", "Filtros da Dimensão Financeira")
+      )
     ),
     
-    div(class = "sidebar-section-title", "Período & Território"),
-    selectInput("ano_selecionado", "Ano de Referência:", choices = lista_anos, selected = max(lista_anos)),
-    selectInput("regiao_ppa", "Macrorregião PPA:", choices = c("Todas as Regiões" = "todas", lista_ppa), selected = "todas"),
-    selectInput("nre_selecionado", "Núcleo Regional (NRE):", choices = c("Todos os NREs" = "todos", lista_nre), selected = "todos"),
-    selectizeInput(
-      "municipios_historico", "Municípios (Histórico):",
-      choices = lista_municipios, multiple = TRUE, selected = NULL,
-      options = list(placeholder = 'Adicionar municípios ao histórico...', plugins = list('remove_button'))
+    # --- BLOCO 1: FILTROS DE MATRÍCULAS (ABAS DE MATRÍCULAS E IA) ---
+    conditionalPanel(
+      condition = "input.nav_principal != 'Financiamento (FUNDEB)'",
+      div(
+        actionButton("limpar_filtros", "↺ Restaurar Filtros Padrão", class = "btn btn-limpar-filtros mb-2")
+      ),
+      
+      div(class = "sidebar-section-title", "Período & Território"),
+      selectInput("ano_selecionado", "Ano de Referência:", choices = lista_anos, selected = max(lista_anos)),
+      selectInput("regiao_ppa", "Macrorregião PPA:", choices = c("Todas as Regiões" = "todas", lista_ppa), selected = "todas"),
+      selectInput("nre_selecionado", "Núcleo Regional (NRE):", choices = c("Todos os NREs" = "todos", lista_nre), selected = "todos"),
+      selectizeInput(
+        "municipios_historico", "Municípios (Histórico):",
+        choices = lista_municipios, multiple = TRUE, selected = NULL,
+        options = list(placeholder = 'Adicionar municípios ao histórico...', plugins = list('remove_button'))
+      ),
+      
+      div(class = "sidebar-section-title", "Recorte Educacional"),
+      selectInput("etapa_ensino", "Etapa de Ensino:", choices = c(
+        "Geral (Todas as Etapas)" = "geral", 
+        "Creche" = "creche",
+        "Pré-escola" = "pre_escola",
+        "Anos Iniciais" = "ai", 
+        "Anos Finais" = "af", 
+        "Ensino Médio" = "em"
+      ), selected = "geral"),
+      
+      selectInput("faixa_etaria", "Faixa Etária:", choices = c(
+        "Geral (Todas as Idades)" = "geral",
+        "0 a 3 anos" = "0_3",
+        "4 a 5 anos" = "4_5",
+        "6 a 10 anos" = "6_10",
+        "11 a 14 anos" = "11_14",
+        "15 a 17 anos" = "15_17",
+        "18 anos ou mais" = "18_mais"
+      ), selected = "geral"),
+      
+      div(class = "sidebar-section-title", "Rede & Métrica"),
+      selectInput("rede_selecionada", "Rede de Ensino:", choices = c(
+        "Total Geral" = "total",
+        "Rede Pública (Soma)" = "publico",
+        "Estadual" = "estadual",
+        "Municipal" = "municipal",
+        "Federal" = "federal",
+        "Privada" = "privada"
+      ), selected = "total"),
+      
+      radioButtons("tipo_valor", "Formato de Exibição:", choices = c(
+        "Números Absolutos" = "absoluto", 
+        "Percentuais (%)" = "percentual"
+      ), selected = "absoluto")
     ),
     
-    div(class = "sidebar-section-title", "Recorte Educacional"),
-    selectInput("etapa_ensino", "Etapa de Ensino:", choices = c(
-      "Geral (Todas as Etapas)" = "geral", 
-      "Creche" = "creche",
-      "Pré-escola" = "pre_escola",
-      "Anos Iniciais" = "ai", 
-      "Anos Finais" = "af", 
-      "Ensino Médio" = "em"
-    ), selected = "geral"),
-    
-    selectInput("faixa_etaria", "Faixa Etária:", choices = c(
-      "Geral (Todas as Idades)" = "geral",
-      "0 a 3 anos" = "0_3",
-      "4 a 5 anos" = "4_5",
-      "6 a 10 anos" = "6_10",
-      "11 a 14 anos" = "11_14",
-      "15 a 17 anos" = "15_17",
-      "18 anos ou mais" = "18_mais"
-    ), selected = "geral"),
-    
-    div(class = "sidebar-section-title", "Rede & Métrica"),
-    selectInput("rede_selecionada", "Rede de Ensino:", choices = c(
-      "Total Geral" = "total",
-      "Rede Pública (Soma)" = "publico",
-      "Estadual" = "estadual",
-      "Municipal" = "municipal",
-      "Federal" = "federal",
-      "Privada" = "privada"
-    ), selected = "total"),
-    
-    radioButtons("tipo_valor", "Formato de Exibição:", choices = c(
-      "Números Absolutos" = "absoluto", 
-      "Percentuais (%)" = "percentual"
-    ), selected = "absoluto")
+    # --- BLOCO 2: FILTROS DA DIMENSÃO FINANCEIRA (EXCLUSIVO NA ABA FUNDEB) ---
+    conditionalPanel(
+      condition = "input.nav_principal == 'Financiamento (FUNDEB)'",
+      fundeb_sidebar_ui("fundeb", lista_anos_fundeb)
+    )
   ),
   
-  # --- ABA 1: VISÃO GERAL (NOVO COCKPIT EXECUTIVO) ---
+  # --- ABA 1: VISÃO GERAL ---
   nav_panel(
     title = "Visão Geral",
     div(
@@ -139,9 +170,9 @@ ui <- page_navbar(
       )
     ),
     
-    # Linha de 6 Cartões de KPI Dinâmicos
     layout_column_wrap(
-      width = 1/6,
+      width = "190px",
+      fill = FALSE,
       kpi_card_ui("kpi_total", "Total de Matrículas", "#14532D", "Volume consolidado de matrículas no recorte selecionado."),
       kpi_card_ui("kpi_publico", "Rede Pública", "#228B52", "Soma das redes Estadual, Municipal e Federal."),
       kpi_card_ui("kpi_privada", "Rede Privada", "#D97706", "Total de matrículas da rede particular no recorte."),
@@ -150,24 +181,24 @@ ui <- page_navbar(
       kpi_card_ui("kpi_federal", "Rede Federal", "#6366F1", "Institutos e Colégios de aplicação federais.")
     ),
     
-    # Grelha Analítica Executiva (2x2)
     layout_column_wrap(
-      width = 1/2,
+      width = "450px",
+      fill = FALSE,
       card(
         card_header("Evolução Histórica do Recorte (2016-2025)"),
-        plotlyOutput("grafico_vg_historico", height = "320px")
+        plotlyOutput("grafico_vg_historico", height = "330px")
       ),
       card(
         card_header("Distribuição Proporcional por Rede de Ensino"),
-        plotlyOutput("grafico_vg_redes", height = "320px")
+        plotlyOutput("grafico_vg_redes", height = "330px")
       ),
       card(
         card_header("Top 10 Municípios no Recorte Selecionado"),
-        plotlyOutput("grafico_vg_top", height = "330px")
+        plotlyOutput("grafico_vg_top", height = "340px")
       ),
       card(
         card_header("Síntese Cartográfica Estadual"),
-        leafletOutput("mapa_vg_resumo", height = "330px")
+        leafletOutput("mapa_vg_resumo", height = "340px")
       )
     )
   ),
@@ -211,26 +242,36 @@ ui <- page_navbar(
     )
   ),
   
-  # --- ABA 6: ASSISTENTE IA ---
+  # --- ABA 6: FINANCIAMENTO DA EDUCAÇÃO (FUNDEB) ---
+  nav_panel(
+    title = "Financiamento (FUNDEB)",
+    fundeb_ui("fundeb")
+  ),
+  
+  # --- ABA 7: ASSISTENTE IA ---
   nav_panel(
     title = "Assistente IA",
     layout_sidebar(
+      fillable = FALSE,
       sidebar = sidebar(
         title = "Sugestões de Perguntas",
-        width = 300,
+        width = 290,
         p(style = "font-size: 0.85rem; color: var(--text-secondary);", 
-          "Selecione uma pergunta frequente para carregar no assistente:"),
+          "Selecione uma consulta de Matrículas ou FUNDEB:"),
+        strong(style = "font-size: 0.75rem; color: var(--pr-green-dark);", "MATRÍCULAS (2016–2025)"),
         actionLink("sug_1", "📊 5 maiores municípios em rede privada (2025)", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_2", "🏛️ Totais de matrículas do NRE Maringá", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_3", "📈 Comparativo da rede pública vs privada em Londrina", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_4", "📍 Top 5 municípios da Região PPA Cascavel", class = "d-block mb-2 text-decoration-none"),
+        actionLink("sug_2", "🏛️ Totais de matrículas do NRE Maringá", class = "d-block mb-3 text-decoration-none"),
+        strong(style = "font-size: 0.75rem; color: var(--pr-green-dark);", "FINANCIAMENTO FUNDEB (2024–2026)"),
+        actionLink("sug_3", "💰 Top 5 municípios em complementação VAAR (2026)", class = "d-block mb-2 text-decoration-none"),
+        actionLink("sug_4", "📍 Receitas previstas do FUNDEB no NRE Maringá (2026)", class = "d-block mb-2 text-decoration-none"),
+        actionLink("sug_5", "⚠️ Municípios sem VAAT informado em 2024", class = "d-block mb-2 text-decoration-none"),
         hr(),
         p(style = "font-size: 0.78rem; color: #94A3B8;", 
-          "O assistente consulta diretamente a base de dados via ferramentas analíticas em R.")
+          "O assistente consulta diretamente as planilhas via ferramentas analíticas em R.")
       ),
       card(
         full_screen = TRUE,
-        card_header("Consulta Analítica à Base de Dados com Google Gemini"),
+        card_header("Consulta Analítica Integrada (Matrículas & FUNDEB) com Google Gemini"),
         chat_ui("chat_educacao")
       )
     )
@@ -242,7 +283,16 @@ ui <- page_navbar(
 # =============================================================================
 server <- function(input, output, session) {
   
-  # Botão Restaurar Filtros
+  # Executa o módulo independente do FUNDEB
+  fundeb_server(
+    id = "fundeb",
+    dados_fundeb_mun    = dados_fundeb_mun,
+    dados_fundeb_estado = dados_fundeb_estado,
+    dados_matriculas    = dados_matriculas,
+    mapa_pr             = mapa_pr
+  )
+  
+  # Botão Restaurar Filtros de Matrículas
   observeEvent(input$limpar_filtros, {
     updateSelectInput(session, "ano_selecionado", selected = max(lista_anos))
     updateSelectInput(session, "regiao_ppa", selected = "todas")
@@ -285,7 +335,7 @@ server <- function(input, output, session) {
     if (input$faixa_etaria != "geral") updateSelectInput(session, "etapa_ensino", selected = "geral")
   }, ignoreInit = TRUE)
   
-  # Base Reativa Central
+  # Base Reativa Central de Matrículas
   dados_reativos <- reactive({
     df <- dados_matriculas
     coluna_alvo <- "total_educacao_basica"
@@ -309,7 +359,6 @@ server <- function(input, output, session) {
     df
   })
   
-  # Dados Consolidados do Ano Selecionado
   dados_ano_consolidados <- reactive({
     consolidar_matriculas_rede(
       dados_reativos(), 
@@ -319,7 +368,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # Métrica Final Reativa
   tabela_metrica_final <- reactive({
     calcular_metrica_final(
       dados_ano_consolidados(),
@@ -328,7 +376,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # Badge de Contexto Ativo na Visão Geral
   output$badge_contexto_ativo <- renderUI({
     txt_territorio <- if (input$nre_selecionado != "todos") {
       paste("NRE:", input$nre_selecionado)
@@ -345,7 +392,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # KPIs da Visão Geral
   kpis_calculados <- reactive({
     calcular_kpis_executivos(
       dados_reativos(),
@@ -362,7 +408,6 @@ server <- function(input, output, session) {
   output$kpi_municipal <- renderUI({ render_kpi_conteudo(kpis_calculados()$municipal) })
   output$kpi_federal   <- renderUI({ render_kpi_conteudo(kpis_calculados()$federal) })
   
-  # Gráficos da Visão Geral
   output$grafico_vg_historico <- renderPlotly({
     df_todos <- dados_reativos()
     if (input$regiao_ppa != "todas") df_todos <- df_todos |> filter(regiao_ppa == input$regiao_ppa)
@@ -425,7 +470,6 @@ server <- function(input, output, session) {
       )
   })
   
-  # --- 1. RANKING COMPLETO ---
   output$grafico_ranking <- renderPlotly({
     qtd_linhas <- ifelse(input$regiao_ppa == "todas" && input$nre_selecionado == "todos", 15, 20)
     metricas <- tabela_metrica_final() |>
@@ -435,11 +479,9 @@ server <- function(input, output, session) {
     render_plotly_ranking(metricas, input$tipo_valor, tools::toTitleCase(input$rede_selecionada))
   })
   
-  # --- 2. EVOLUÇÃO HISTÓRICA COMPLETA ---
   output$grafico_historico <- renderPlotly({
     df_todos <- dados_reativos()
     
-    # Linha Paraná
     resumo_estado <- df_todos |>
       group_by(ano, rede) |>
       summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -467,7 +509,6 @@ server <- function(input, output, session) {
     
     df_plot <- resumo_estado |> mutate(local = "PARANÁ (Total Estadual)") |> select(ano, local, valor_final)
     
-    # Recorte PPA
     if (input$regiao_ppa != "todas") {
       resumo_ppa <- df_todos |> filter(regiao_ppa == input$regiao_ppa) |>
         group_by(ano, rede) |> summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -492,7 +533,6 @@ server <- function(input, output, session) {
       df_plot <- bind_rows(df_plot, resumo_ppa |> mutate(local = paste0("Região PPA ", input$regiao_ppa)) |> select(ano, local, valor_final))
     }
     
-    # Recorte NRE
     if (input$nre_selecionado != "todos") {
       resumo_nre <- df_todos |> filter(nome_nre == input$nre_selecionado) |>
         group_by(ano, rede) |> summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -517,7 +557,6 @@ server <- function(input, output, session) {
       df_plot <- bind_rows(df_plot, resumo_nre |> mutate(local = paste0("NRE ", input$nre_selecionado)) |> select(ano, local, valor_final))
     }
     
-    # Municípios Comparados
     if (!is.null(input$municipios_historico) && length(input$municipios_historico) > 0) {
       df_muni <- df_todos |> filter(municipio %in% input$municipios_historico) |>
         group_by(ano, municipio, rede) |> summarise(valor_etapa = sum(valor_etapa, na.rm = TRUE), .groups = 'drop') |>
@@ -545,7 +584,6 @@ server <- function(input, output, session) {
     render_plotly_historico(df_plot, input$tipo_valor, tools::toTitleCase(input$rede_selecionada))
   })
   
-  # --- 3. MAPA INTERATIVO COMPLETO ---
   output$mapa_interativo <- renderLeaflet({
     metricas <- tabela_metrica_final() |> select(codigo_municipio, municipio, valor_final)
     
@@ -592,7 +630,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- 4. TABELA DETALHADA ---
   output$tabela_dinamica <- renderDT({
     tabela_larga <- dados_ano_consolidados()
     
@@ -679,27 +716,35 @@ server <- function(input, output, session) {
     dt
   })
   
-  # --- 5. ASSISTENTE IA (ELLMER + SHINYCHAT) ---
-  ia_obj <- inicializar_assistente_ia(dados_matriculas)
+  # --- ASSISTENTE IA INTEGRADO (MATRÍCULAS + FUNDEB) ---
+  ia_obj   <- inicializar_assistente_ia(dados_matriculas, dados_fundeb_mun, dados_fundeb_estado)
   chat_bot <- ia_obj$bot
-  erro_ia <- ia_obj$erro
+  erro_ia  <- ia_obj$erro
   
-  # Atalhos de Perguntas Sugeridas
   observeEvent(input$sug_1, {
-    chat_append("chat_educacao", user_turn("Quais são os 5 municípios com maior taxa de rede privada em 2025?"))
-    processar_pergunta("Quais são os 5 municípios com maior taxa de rede privada em 2025?")
+    q <- "Quais são os 5 municípios com maior taxa de rede privada em 2025?"
+    chat_append("chat_educacao", user_turn(q))
+    processar_pergunta(q)
   })
   observeEvent(input$sug_2, {
-    chat_append("chat_educacao", user_turn("Qual é o total de matrículas por rede no NRE de Maringá em 2025?"))
-    processar_pergunta("Qual é o total de matrículas por rede no NRE de Maringá em 2025?")
+    q <- "Qual é o total de matrículas por rede no NRE de Maringá em 2025?"
+    chat_append("chat_educacao", user_turn(q))
+    processar_pergunta(q)
   })
   observeEvent(input$sug_3, {
-    chat_append("chat_educacao", user_turn("Como se distribuem as matrículas públicas e privadas em Londrina no ano de 2025?"))
-    processar_pergunta("Como se distribuem as matrículas públicas e privadas em Londrina no ano de 2025?")
+    q <- "Quais os 5 municípios que receberam maior previsão de complementação VAAR em 2026?"
+    chat_append("chat_educacao", user_turn(q))
+    processar_pergunta(q)
   })
   observeEvent(input$sug_4, {
-    chat_append("chat_educacao", user_turn("Quais os 5 maiores municípios em matrículas na Região PPA Cascavel em 2025?"))
-    processar_pergunta("Quais os 5 maiores municípios em matrículas na Região PPA Cascavel em 2025?")
+    q <- "Qual é o total de receitas previstas e complementações do FUNDEB nos municípios do NRE Maringá em 2026?"
+    chat_append("chat_educacao", user_turn(q))
+    processar_pergunta(q)
+  })
+  observeEvent(input$sug_5, {
+    q <- "Quantos municípios não possuem valor informado para complementação VAAT em 2024?"
+    chat_append("chat_educacao", user_turn(q))
+    processar_pergunta(q)
   })
   
   processar_pergunta <- function(texto) {

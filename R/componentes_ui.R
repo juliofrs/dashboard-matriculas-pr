@@ -37,6 +37,7 @@ estilos_customizados <- function() {
       body {
         background-color: var(--bg-canvas) !important;
         color: var(--text-primary) !important;
+        overflow-y: auto !important;
       }
       
       .navbar {
@@ -63,38 +64,65 @@ estilos_customizados <- function() {
         font-weight: 600;
       }
       
+      /* Previne compressão vertical de cards e layouts em páginas com rolagem */
+      .bslib-page-navbar .tab-content,
+      .bslib-page-navbar .tab-pane {
+        height: auto !important;
+        min-height: calc(100vh - 70px);
+        overflow: visible !important;
+      }
+      
+      .bslib-grid {
+        height: auto !important;
+      }
+      
       .card {
         background: var(--bg-surface);
         border: 1px solid var(--border-subtle);
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(20, 83, 45, 0.05);
         margin-bottom: 1rem;
+        height: auto !important;
+        overflow: hidden;
       }
       
       .card-header {
         background-color: #FAFCFB;
         border-bottom: 1px solid var(--border-subtle);
         font-weight: 600;
-        font-size: 0.95rem;
+        font-size: 0.92rem;
         color: var(--text-primary);
-        padding: 0.85rem 1.15rem;
+        padding: 0.75rem 1.1rem;
+      }
+      
+      .card-header .form-group,
+      .card-header .shiny-input-container {
+        margin-bottom: 0 !important;
+      }
+      
+      .card-body {
+        height: auto !important;
+        overflow: visible;
       }
       
       /* Componente: Card de KPI Executivo */
       .kpi-container {
-        padding: 1rem 1.15rem;
+        padding: 0.95rem 1.1rem;
         background: #FFFFFF;
         border: 1px solid var(--border-subtle);
         border-radius: 10px;
         border-left: 4px solid var(--pr-green-main);
+        box-shadow: 0 1px 3px rgba(20, 83, 45, 0.05);
+        min-height: 132px;
         height: 100%;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
+        gap: 4px;
       }
       
       .kpi-title {
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
@@ -102,25 +130,28 @@ estilos_customizados <- function() {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 6px;
       }
       
       .kpi-value {
-        font-size: 1.7rem;
+        font-size: 1.45rem;
         font-weight: 700;
         color: var(--text-primary);
         font-variant-numeric: tabular-nums;
-        line-height: 1.2;
-        margin: 0.35rem 0;
+        line-height: 1.25;
+        margin: 0.2rem 0;
+        word-break: break-word;
       }
       
       .kpi-badge {
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         font-weight: 500;
         padding: 0.2rem 0.5rem;
         border-radius: 4px;
-        display: inline-flex;
-        align-items: center;
+        display: inline-block;
         width: fit-content;
+        max-width: 100%;
+        line-height: 1.3;
       }
       
       .kpi-badge-positive {
@@ -141,19 +172,20 @@ estilos_customizados <- function() {
       .kpi-subtext {
         font-size: 0.72rem;
         color: var(--text-secondary);
-        margin-top: 0.25rem;
+        margin-top: 0.15rem;
+        line-height: 1.3;
       }
       
       /* Filtros Laterais */
       .sidebar-section-title {
-        font-size: 0.75rem;
+        font-size: 0.74rem;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        color: var(--text-secondary);
-        margin-top: 1rem;
-        margin-bottom: 0.4rem;
-        padding-bottom: 0.2rem;
+        color: var(--pr-green-dark);
+        margin-top: 0.9rem;
+        margin-bottom: 0.45rem;
+        padding-bottom: 0.25rem;
         border-bottom: 1px solid var(--border-subtle);
       }
       
@@ -185,6 +217,12 @@ estilos_customizados <- function() {
         font-weight: 700 !important;
         color: var(--pr-green-dark) !important;
       }
+      
+      /* Isolamento de z-index do Leaflet para não sobrepor cabeçalhos */
+      .leaflet-container {
+        z-index: 1 !important;
+        border-radius: 6px;
+      }
     "))
   )
 }
@@ -199,7 +237,7 @@ kpi_card_ui <- function(id, titulo, borda_cor = "var(--pr-green-main)", tooltip_
       span(titulo),
       if (nzchar(tooltip_desc)) {
         span(
-          style = "cursor: help; color: #94A3B8;",
+          style = "cursor: help; color: #94A3B8; font-size: 0.85rem;",
           title = tooltip_desc,
           "ⓘ"
         )
@@ -291,7 +329,7 @@ render_plotly_historico <- function(df_plot, tipo_valor, rede_nome) {
     eixo_y <- list(title = paste("Total de Matrículas (", rede_nome, ")"))
   }
   
-  p <- plot_ly(
+  plot_ly(
     data = df_plot,
     x = ~ano,
     y = ~valor_final,
@@ -312,6 +350,4 @@ render_plotly_historico <- function(df_plot, tipo_valor, rede_nome) {
       font = list(family = "Inter, sans-serif")
     ) |>
     config(displayModeBar = FALSE)
-  
-  p
 }
