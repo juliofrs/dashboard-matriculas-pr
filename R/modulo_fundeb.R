@@ -860,28 +860,70 @@ fundeb_server <- function(id, dados_fundeb_mun, dados_fundeb_estado, dados_matri
         )
     })
     
-    # ÁREA 4 — TABELA DETALHADA DOS MUNICÍPIOS
+    # ÁREA 4 — TABELA DETALHADA DOS MUNICÍPIOS (COM ORDENAÇÃO NUMÉRICA REAL)
     output$tabela_fundeb <- renderDT({
       df  <- base_recorte()
       ind <- input$indicador_fundeb
       
+      # Ordena inicialmente pelo indicador selecionado (maiores primeiro, NA ao final)
       df_ord <- df |>
         arrange(desc(!is.na(.data[[ind]])), desc(.data[[ind]]), municipio)
       
+      # Mantém colunas financeiras como NUMÉRICAS (preservando NA) para ordenação exata
       tabela_exibicao <- df_ord |>
         transmute(
           `Município`              = municipio,
           `Região PPA`             = regiao_ppa,
           `NRE`                    = nome_nre,
-          `Contribuição Fundeb`    = formatar_moeda_br(receita_contribuicao_fundeb),
-          `VAAF`                   = formatar_moeda_br(complementacao_vaaf),
-          `VAAT`                   = formatar_moeda_br(complementacao_vaat),
-          `VAAR`                   = formatar_moeda_br(complementacao_vaar),
-          `Comp. União Total`      = formatar_moeda_br(complementacao_uniao_total),
-          `Receita Total Prevista` = formatar_moeda_br(receita_total_prevista),
-          `% União / Receita`      = ifelse(is.na(pct_uniao_receita), "Não calculado",
-                                            paste0(formatC(pct_uniao_receita, format = "f", digits = 2, decimal.mark = ","), "%"))
+          `Contribuição Fundeb`    = as.numeric(receita_contribuicao_fundeb),
+          `VAAF`                   = as.numeric(complementacao_vaaf),
+          `VAAT`                   = as.numeric(complementacao_vaat),
+          `VAAR`                   = as.numeric(complementacao_vaar),
+          `Comp. União Total`      = as.numeric(complementacao_uniao_total),
+          `Receita Total Prevista` = as.numeric(receita_total_prevista),
+          `% União / Receita`      = as.numeric(pct_uniao_receita)
         )
+      
+      # Renderizador JS para moeda em R$ (diferencia R$ 0,00 de NA = 'Não informado')
+      js_moeda_br <- JS("
+        function(data, type, row, meta) {
+          if (type === 'display' || type === 'filter') {
+            if (data === null || data === undefined || isNaN(data)) {
+              return '<span style=\"color:#94A3B8; font-style:italic;\">Não informado</span>';
+            }
+            return 'R$ ' + Number(data).toLocaleString('pt-BR', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            });
+          }
+          // Para ordenação (sort/type): NA fica sempre no fim independentemente da direção
+          if (data === null || data === undefined || isNaN(data)) {
+            var order = meta.settings.aaSorting && meta.settings.aaSorting[0] ? meta.settings.aaSorting[0][1] : 'desc';
+            return order === 'asc' ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER;
+          }
+          return Number(data);
+        }
+      ")
+      
+      # Renderizador JS para percentual (diferencia 0,00% de NA = 'Não calculado')
+      js_pct_br <- JS("
+        function(data, type, row, meta) {
+          if (type === 'display' || type === 'filter') {
+            if (data === null || data === undefined || isNaN(data)) {
+              return '<span style=\"color:#94A3B8; font-style:italic;\">Não calculado</span>';
+            }
+            return Number(data).toLocaleString('pt-BR', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            }) + '%';
+          }
+          if (data === null || data === undefined || isNaN(data)) {
+            var order = meta.settings.aaSorting && meta.settings.aaSorting[0] ? meta.settings.aaSorting[0][1] : 'desc';
+            return order === 'asc' ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER;
+          }
+          return Number(data);
+        }
+      ")
       
       datatable(
         tabela_exibicao,
@@ -891,22 +933,37 @@ fundeb_server <- function(id, dados_fundeb_mun, dados_fundeb_estado, dados_matri
           pageLength = 15,
           scrollX = TRUE,
           dom = "Bfrtip",
+          columnDefs = list(
+            list(
+              targets = c(3, 4, 5, 6, 7, 8), # Índices 0-based das colunas monetárias
+              render = js_moeda_br,
+              className = "dt-right",
+              orderSequence = c("desc", "asc")
+            ),
+            list(
+              targets = 9, # Índice 0-based da coluna '% União / Receita'
+              render = js_pct_br,
+              className = "dt-right",
+              orderSequence = c("desc", "asc")
+            )
+          ),
           buttons = list(
-            list(extend = "csv", text = "Exportar CSV", filename = paste0("fundeb_parana_", input$ano_fundeb)),
-            list(extend = "excel", text = "Exportar Excel", filename = paste0("fundeb_parana_", input$ano_fundeb))
+            list(
+              extend = "csv",
+              text = "Exportar CSV",
+              filename = paste0("fundeb_parana_", input$ano_fundeb),
+              exportOptions = list(orthogonal = "display")
+            ),
+            list(
+              extend = "excel",
+              text = "Exportar Excel",
+              filename = paste0("fundeb_parana_", input$ano_fundeb),
+              exportOptions = list(orthogonal = "display")
+            )
           ),
           language = list(url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Portuguese-Brasil.json")
         )
-      ) |>
-        formatStyle(
-          columns = c("Contribuição Fundeb", "VAAF", "VAAT", "VAAR", "Comp. União Total", "Receita Total Prevista", "% União / Receita"),
-          textAlign = "right"
-        ) |>
-        formatStyle(
-          columns = c("VAAF", "VAAT", "VAAR", "Comp. União Total"),
-          color = styleEqual("Não informado", "#94A3B8"),
-          fontStyle = styleEqual("Não informado", "italic")
-        )
+      )
     })
   })
 }
