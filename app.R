@@ -16,8 +16,6 @@ suppressPackageStartupMessages({
   library(scales)
   library(leaflet)
   library(sf)
-  library(shinychat)
-  library(ellmer)
 })
 
 # Carregamento modular resiliente
@@ -26,7 +24,6 @@ if (dir.exists("R")) {
   source("R/funcoes_fundeb.R")
   source("R/componentes_ui.R")
   source("R/modulo_fundeb.R")
-  source("R/modulo_ia.R")
 }
 
 # =============================================================================
@@ -94,7 +91,7 @@ ui <- page_navbar(
       )
     ),
     
-    # --- BLOCO 1: FILTROS DE MATRÍCULAS (ABAS DE MATRÍCULAS E IA) ---
+    # --- BLOCO 1: FILTROS DE MATRÍCULAS ---
     conditionalPanel(
       condition = "input.nav_principal != 'Financiamento (FUNDEB)'",
       div(
@@ -246,35 +243,6 @@ ui <- page_navbar(
   nav_panel(
     title = "Financiamento (FUNDEB)",
     fundeb_ui("fundeb")
-  ),
-  
-  # --- ABA 7: ASSISTENTE IA ---
-  nav_panel(
-    title = "Assistente IA",
-    layout_sidebar(
-      fillable = FALSE,
-      sidebar = sidebar(
-        title = "Sugestões de Perguntas",
-        width = 290,
-        p(style = "font-size: 0.85rem; color: var(--text-secondary);", 
-          "Selecione uma consulta de Matrículas ou FUNDEB:"),
-        strong(style = "font-size: 0.75rem; color: var(--pr-green-dark);", "MATRÍCULAS (2016–2025)"),
-        actionLink("sug_1", "📊 5 maiores municípios em rede privada (2025)", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_2", "🏛️ Totais de matrículas do NRE Maringá", class = "d-block mb-3 text-decoration-none"),
-        strong(style = "font-size: 0.75rem; color: var(--pr-green-dark);", "FINANCIAMENTO FUNDEB (2024–2026)"),
-        actionLink("sug_3", "💰 Top 5 municípios em complementação VAAR (2026)", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_4", "📍 Receitas previstas do FUNDEB no NRE Maringá (2026)", class = "d-block mb-2 text-decoration-none"),
-        actionLink("sug_5", "⚠️ Municípios sem VAAT informado em 2024", class = "d-block mb-2 text-decoration-none"),
-        hr(),
-        p(style = "font-size: 0.78rem; color: #94A3B8;", 
-          "O assistente consulta diretamente as planilhas via ferramentas analíticas em R.")
-      ),
-      card(
-        full_screen = TRUE,
-        card_header("Consulta Analítica Integrada (Matrículas & FUNDEB) com Google Gemini"),
-        chat_ui("chat_educacao")
-      )
-    )
   )
 )
 
@@ -714,60 +682,6 @@ server <- function(input, output, session) {
       dt <- dt |> formatCurrency(c("estadual", "municipal", "federal", "publico", "privada", "total", "populacao_2024"), currency = "", interval = 3, mark = ".", digits = 0)
     }
     dt
-  })
-  
-  # --- ASSISTENTE IA INTEGRADO (MATRÍCULAS + FUNDEB) ---
-  ia_obj   <- inicializar_assistente_ia(dados_matriculas, dados_fundeb_mun, dados_fundeb_estado)
-  chat_bot <- ia_obj$bot
-  erro_ia  <- ia_obj$erro
-  
-  observeEvent(input$sug_1, {
-    q <- "Quais são os 5 municípios com maior taxa de rede privada em 2025?"
-    chat_append("chat_educacao", user_turn(q))
-    processar_pergunta(q)
-  })
-  observeEvent(input$sug_2, {
-    q <- "Qual é o total de matrículas por rede no NRE de Maringá em 2025?"
-    chat_append("chat_educacao", user_turn(q))
-    processar_pergunta(q)
-  })
-  observeEvent(input$sug_3, {
-    q <- "Quais os 5 municípios que receberam maior previsão de complementação VAAR em 2026?"
-    chat_append("chat_educacao", user_turn(q))
-    processar_pergunta(q)
-  })
-  observeEvent(input$sug_4, {
-    q <- "Qual é o total de receitas previstas e complementações do FUNDEB nos municípios do NRE Maringá em 2026?"
-    chat_append("chat_educacao", user_turn(q))
-    processar_pergunta(q)
-  })
-  observeEvent(input$sug_5, {
-    q <- "Quantos municípios não possuem valor informado para complementação VAAT em 2024?"
-    chat_append("chat_educacao", user_turn(q))
-    processar_pergunta(q)
-  })
-  
-  processar_pergunta <- function(texto) {
-    if (is.null(chat_bot)) {
-      chat_append("chat_educacao", paste0("⚠️ **Assistente indisponível:**\n\n`", erro_ia, "`"))
-      return()
-    }
-    tryCatch({
-      resp <- chat_bot$chat(texto)
-      chat_append("chat_educacao", resp)
-    }, error = function(e) {
-      if (grepl("429", e$message)) {
-        chat_append("chat_educacao", "⏳ **Limite de requisições por minuto atingido (HTTP 429).** Aguarde cerca de 60 segundos antes de efetuar nova consulta.")
-      } else {
-        chat_append("chat_educacao", paste0("⚠️ **Erro na consulta:** ", e$message))
-      }
-    })
-  }
-  
-  observeEvent(input$chat_educacao_user_input, {
-    texto <- extrair_texto_usuario(input$chat_educacao_user_input)
-    if (!nzchar(trimws(texto))) return()
-    processar_pergunta(texto)
   })
 }
 
