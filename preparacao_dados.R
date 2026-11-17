@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
   library(geobr)
 })
 
-caminho_matriculas <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
+caminho_matriculas <- "dados_educacionais.xlsx"
 caminho_fundeb     <- "Fundeb.xlsx"
 
 if (!file.exists(caminho_matriculas)) {
