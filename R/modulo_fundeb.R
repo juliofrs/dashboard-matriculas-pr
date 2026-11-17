@@ -474,7 +474,7 @@ fundeb_server <- function(id, dados_fundeb_mun, dados_fundeb_estado, dados_matri
               span(formatar_moeda_br(m_mat$receita_prevista_por_mat_mun[1])),
               span(style = "color: var(--text-secondary);",
                    sprintf(" (%s matrículas municipais; indicador de previsão orçamentária, não repasse líquido efetivo).",
-                           format(m_mat$matriculas_rede_municipal[1], big.mark = ".")))
+                           format(m_mat$matriculas_rede_municipal[1], big.mark = ".", decimal.mark = ",")))
             )
           } else NULL
         } else {
@@ -518,7 +518,7 @@ fundeb_server <- function(id, dados_fundeb_mun, dados_fundeb_estado, dados_matri
         soma_al  <- sum(sub_mat$matriculas_rede_municipal, na.rm = TRUE)
         if (soma_al > 0) {
           sprintf("Receita prevista / matrícula municipal (%d): %s (%s alunos na rede municipal; valor previsto).",
-                  ano_sel, formatar_moeda_br(soma_rec / soma_al), format(soma_al, big.mark = "."))
+                  ano_sel, formatar_moeda_br(soma_rec / soma_al), format(soma_al, big.mark = ".", decimal.mark = ","))
         } else ""
       } else {
         "Indicadores por matrícula desabilitados em 2026 para evitar mistura de exercícios diferentes (Censo vai até 2025)."
@@ -852,7 +852,9 @@ fundeb_server <- function(id, dados_fundeb_mun, dados_fundeb_estado, dados_matri
           opacity = 0.85,
           title = paste0("<strong>", METADADOS_INDICADORES_FUNDEB[[ind]]$curto, " (R$)</strong>"),
           position = "bottomright",
-          labFormat = labelFormat(prefix = "R$ ", big.mark = ".")
+          labFormat = function(type, cuts, p) {
+            paste0("R$ ", format(round(cuts, 0), big.mark = ".", decimal.mark = ",", trim = TRUE, scientific = FALSE))
+          }
         ) |>
         addLayersControl(
           baseGroups = c("Cinza Minimalista", "Topográfico"),

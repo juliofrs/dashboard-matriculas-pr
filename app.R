@@ -29,7 +29,7 @@ if (dir.exists("R")) {
 # =============================================================================
 # 1. CARREGAMENTO E PREPARAÇÃO DOS DADOS (EXECUÇÃO ÚNICA NO ARRANQUE)
 # =============================================================================
-caminho_base <- "Matriculas_faixa_etaria_rede_municipio_consultas.xlsx"
+caminho_base <- "dados_educacionais.xlsx"
 dados_matriculas <- read_excel(caminho_base, sheet = "Plan1") |> clean_names()
 dados_matriculas$codigo_municipio <- as.numeric(dados_matriculas$codigo_municipio)
 
@@ -234,6 +234,7 @@ ui <- page_navbar(
   nav_panel(
     title = "Tabela Detalhada",
     card(
+      fill = FALSE,
       card_header("Detalhamento por Município, Redes de Ensino e População IBGE"),
       DTOutput("tabela_dinamica")
     )
@@ -434,7 +435,7 @@ server <- function(input, output, session) {
       addProviderTiles(providers$Esri.WorldGrayCanvas) |>
       addPolygons(
         fillColor = ~pal(valor_final), weight = 1, opacity = 1, color = "#64748B", fillOpacity = 0.85,
-        label = ~paste0(name_muni, ": ", format(valor_final, big.mark = "."))
+        label = ~paste0(name_muni, ": ", format(valor_final, big.mark = ".", decimal.mark = ","))
       )
   })
   
@@ -564,8 +565,9 @@ server <- function(input, output, session) {
     
     if (input$tipo_valor == "percentual") {
       pal <- colorNumeric("YlGn", domain = c(0, 1), na.color = "transparent")
-      popup_texto <- sprintf("<strong>%s</strong><br/>%s: <strong>%.1f%%</strong>", 
-                             mapa_pr_dados$name_muni, tools::toTitleCase(input$rede_selecionada), mapa_pr_dados$valor_final * 100)
+      popup_texto <- sprintf("<strong>%s</strong><br/>%s: <strong>%s</strong> matrículas", 
+                             mapa_pr_dados$name_muni, tools::toTitleCase(input$rede_selecionada), 
+                             format(mapa_pr_dados$valor_final, big.mark = ".", decimal.mark = ","))
       titulo_legenda <- paste("<strong>% de", tools::toTitleCase(input$rede_selecionada), "</strong>")
       
       leaflet(mapa_pr_dados) |>
@@ -583,7 +585,7 @@ server <- function(input, output, session) {
       if (d_min == d_max) d_max <- d_min + 1
       pal <- colorNumeric("Greens", domain = c(d_min, d_max), na.color = "transparent")
       popup_texto <- sprintf("<strong>%s</strong><br/>%s: <strong>%s</strong> matrículas", 
-                             mapa_pr_dados$name_muni, tools::toTitleCase(input$rede_selecionada), format(mapa_pr_dados$valor_final, big.mark = "."))
+                             mapa_pr_dados$name_muni, tools::toTitleCase(input$rede_selecionada), format(mapa_pr_dados$valor_final, big.mark = ".", decimal.mark = ","))
       titulo_legenda <- paste("<strong>Total:", tools::toTitleCase(input$rede_selecionada), "</strong>")
       
       leaflet(mapa_pr_dados) |>
@@ -593,7 +595,16 @@ server <- function(input, output, session) {
         addPolygons(fillColor = ~pal(valor_final), weight = 1, opacity = 1, color = "#64748B", fillOpacity = 0.85,
                     highlightOptions = highlightOptions(weight = 2, color = "#14532D", fillOpacity = 1, bringToFront = TRUE),
                     label = lapply(popup_texto, htmltools::HTML)) |>
-        addLegend(pal = pal, values = c(d_min, d_max), opacity = 0.85, title = titulo_legenda, position = "bottomright", labFormat = labelFormat(big.mark = ".")) |>
+        addLegend(
+          pal = pal,
+          values = c(d_min, d_max),
+          opacity = 0.85,
+          title = titulo_legenda,
+          position = "bottomright",
+          labFormat = function(type, cuts, p) {
+            format(round(cuts, 0), big.mark = ".", decimal.mark = ",", trim = TRUE, scientific = FALSE)
+          }
+        ) |>
         addLayersControl(baseGroups = c("Cinza Minimalista (Padrão)", "Topográfico", "OpenStreetMap (Ruas)"), options = layersControlOptions(collapsed = TRUE))
     }
   })
@@ -628,7 +639,7 @@ server <- function(input, output, session) {
       p_pub  <- ifelse(val_tot == 0, "0,0%", percent(val_pub / val_tot, accuracy = 0.1, decimal.mark = ","))
       p_priv <- ifelse(val_tot == 0, "0,0%", percent(val_priv / val_tot, accuracy = 0.1, decimal.mark = ","))
       p_tot  <- "100,0%"
-      p_pop  <- format(val_pop, big.mark = ".")
+      p_pop  <- format(val_pop, big.mark = ".", decimal.mark = ",")
       
       tabela_municipios <- tabela_municipios |> mutate(
         estadual = ifelse(total == 0, 0, estadual / total),
@@ -638,13 +649,13 @@ server <- function(input, output, session) {
         privada = ifelse(total == 0, 0, privada / total)
       )
     } else {
-      p_est  <- format(val_est, big.mark = ".")
-      p_mun  <- format(val_mun, big.mark = ".")
-      p_fed  <- format(val_fed, big.mark = ".")
-      p_pub  <- format(val_pub, big.mark = ".")
-      p_priv <- format(val_priv, big.mark = ".")
-      p_tot  <- format(val_tot, big.mark = ".")
-      p_pop  <- format(val_pop, big.mark = ".")
+      p_est  <- format(val_est, big.mark = ".", decimal.mark = ",")
+      p_mun  <- format(val_mun, big.mark = ".", decimal.mark = ",")
+      p_fed  <- format(val_fed, big.mark = ".", decimal.mark = ",")
+      p_pub  <- format(val_pub, big.mark = ".", decimal.mark = ",")
+      p_priv <- format(val_priv, big.mark = ".", decimal.mark = ",")
+      p_tot  <- format(val_tot, big.mark = ".", decimal.mark = ",")
+      p_pop  <- format(val_pop, big.mark = ".", decimal.mark = ",")
     }
     
     sketch <- htmltools::withTags(table(

@@ -29,7 +29,7 @@ df_plan1$codigo_municipio <- as.numeric(df_plan1$codigo_municipio)
 df_pop$codigo_ibge        <- as.numeric(df_pop$codigo_ibge)
 
 message(sprintf("    ✓ Registos em Plan1: %s linhas (%d municípios x %d anos x %d redes)",
-                format(nrow(df_plan1), big.mark = "."),
+                format(nrow(df_plan1), big.mark = ".", decimal.mark = ","),
                 n_distinct(df_plan1$codigo_municipio),
                 n_distinct(df_plan1$ano),
                 n_distinct(df_plan1$rede)))

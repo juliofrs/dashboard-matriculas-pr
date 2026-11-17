@@ -135,7 +135,7 @@ calcular_kpis_executivos <- function(dados, ano_filtro, nre_filtro = "todos", pp
       "Ano base sem dados anteriores"
     } else {
       sprintf("%s%s matrículas (%s%.1f%% vs %d)", 
-              sinal, format(dif_abs, big.mark = "."), 
+              sinal, format(dif_abs, big.mark = ".", decimal.mark = ","), 
               sinal, dif_pct, ano_filtro - 1)
     }
     

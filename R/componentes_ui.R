@@ -76,14 +76,16 @@ estilos_customizados <- function() {
         height: auto !important;
       }
       
-      .card {
+      .card, .bslib-card {
         background: var(--bg-surface);
         border: 1px solid var(--border-subtle);
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(20, 83, 45, 0.05);
         margin-bottom: 1rem;
         height: auto !important;
-        overflow: hidden;
+        max-height: none !important;
+        flex: none !important;
+        overflow: visible !important;
       }
       
       .card-header {
@@ -100,9 +102,16 @@ estilos_customizados <- function() {
         margin-bottom: 0 !important;
       }
       
-      .card-body {
+      .card-body, .bslib-card .card-body {
         height: auto !important;
-        overflow: visible;
+        max-height: none !important;
+        flex: none !important;
+        overflow: visible !important;
+      }
+      
+        .datatables, .dataTables_wrapper {
+        height: auto !important;
+        overflow: visible !important;
       }
       
       /* Componente: Card de KPI Executivo */
